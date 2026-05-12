@@ -36,10 +36,10 @@ export default function DisponibilidadePage() {
   useEffect(() => {
     schedulesApi.mine()
       .then((r) => {
-        setWorkDays(r.data.workDays);
-        setStartTime(r.data.startTime ?? '08:00');
-        setEndTime(r.data.endTime ?? '18:00');
-        setBlockedDates(new Set(r.data.blockedDates));
+        setWorkDays(r.data.work_days);
+        setStartTime(r.data.start_time ?? '08:00');
+        setEndTime(r.data.end_time ?? '18:00');
+        setBlockedDates(new Set(r.data.blocked_dates));
       })
       .catch(() => toast.error('Erro ao carregar disponibilidade'))
       .finally(() => setLoading(false));
@@ -52,7 +52,7 @@ export default function DisponibilidadePage() {
     setWorkDays(next);
     setSavingDays(true);
     try {
-      await schedulesApi.update({ workDays: next });
+      await schedulesApi.update({ work_days: next });
       toast.success('Dias de trabalho atualizados');
     } catch {
       setWorkDays(workDays);
@@ -68,7 +68,7 @@ export default function DisponibilidadePage() {
     }
     setSavingHours(true);
     try {
-      await schedulesApi.update({ startTime, endTime });
+      await schedulesApi.update({ start_time: startTime, end_time: endTime });
       toast.success('Horários atualizados');
     } catch {
       toast.error('Erro ao salvar horários');

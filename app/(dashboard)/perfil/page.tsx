@@ -6,6 +6,7 @@ import { Camera, Sun, Moon, Check, Eye, EyeOff } from 'lucide-react';
 import { useAuth } from '@/lib/auth/AuthContext';
 import { useTheme } from '@/lib/theme/ThemeContext';
 import { usersApi } from '@/lib/api/users';
+import { avatarSrc } from '@/lib/utils';
 
 const inputClass =
   'w-full border border-gray-300 dark:border-gray-600 rounded-lg px-3 py-2.5 text-sm bg-white dark:bg-gray-700 text-gray-900 dark:text-white placeholder-gray-400 dark:placeholder-gray-500 focus:outline-none focus:ring-2 focus:ring-slate-500 transition-colors';
@@ -71,7 +72,7 @@ export default function PerfilPage() {
     if (newPassword !== confirmPassword) return toast.error('Senhas não coincidem');
     setSavingPassword(true);
     try {
-      await usersApi.changePassword({ currentPassword, newPassword });
+      await usersApi.changePassword({ current_password: currentPassword, new_password: newPassword });
       toast.success('Senha alterada com sucesso');
       setCurrentPassword('');
       setNewPassword('');
@@ -107,7 +108,7 @@ export default function PerfilPage() {
               className="w-20 h-20 rounded-full overflow-hidden bg-slate-200 dark:bg-slate-700 flex items-center justify-center group relative"
             >
               {avatar
-                ? <img src={avatar} alt={user.name} className="w-full h-full object-cover" />
+                ? <img src={avatarSrc(avatar)!} alt={user.name} className="w-full h-full object-cover" />
                 : <span className="text-2xl font-bold text-slate-600 dark:text-slate-300">{user.name.charAt(0).toUpperCase()}</span>
               }
               <div className="absolute inset-0 bg-black/40 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center rounded-full">

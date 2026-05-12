@@ -32,7 +32,7 @@ export default function LoginPage() {
       const res = await authApi.login(data);
       login(res.data);
       toast.success(`Bem-vindo, ${res.data.user.name}!`);
-      router.push('/agendamentos');
+      router.push('/dashboard');
     } catch (err: unknown) {
       toast.error((err as { response?: { data?: { message?: string } } }).response?.data?.message ?? 'Credenciais inválidas');
     }

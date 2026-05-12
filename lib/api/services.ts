@@ -1,21 +1,22 @@
 import api from './client';
 
 export interface Service {
-  id: string;
+  id: number;
   name: string;
   description?: string;
-  durationMinutes: number;
+  duration_minutes: number;
   price: number;
-  isActive: boolean;
-  tenantId: string;
+  is_active: boolean;
+  tenant_id: number;
 }
 
 export const servicesApi = {
   list: () => api.get<Service[]>('/services'),
-  get: (id: string) => api.get<Service>(`/services/${id}`),
-  create: (data: Omit<Service, 'id' | 'isActive' | 'tenantId'>) =>
+  get: (id: number) => api.get<Service>(`/services/${id}`),
+  create: (data: Omit<Service, 'id' | 'is_active' | 'tenant_id'>) =>
     api.post<Service>('/services', data),
-  update: (id: string, data: Partial<Service>) =>
+  update: (id: number, data: Partial<Service>) =>
     api.put<Service>(`/services/${id}`, data),
-  remove: (id: string) => api.delete(`/services/${id}`),
+  toggleActive: (id: number) => api.patch<Service>(`/services/${id}/toggle-active`),
+  remove: (id: number) => api.delete(`/services/${id}`),
 };

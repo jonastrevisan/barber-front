@@ -11,12 +11,12 @@ import Cookies from 'js-cookie';
 import { AuthResponse } from '../api/auth';
 
 interface AuthUser {
-  id: string;
+  id: number;
   name: string;
   email: string;
   role: string;
   avatar?: string | null;
-  tenantId: string;
+  tenant_id: number;
 }
 
 interface AuthContextType {
@@ -48,8 +48,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }, []);
 
   const login = (data: AuthResponse) => {
-    Cookies.set('accessToken', data.accessToken, { expires: 1 });
-    Cookies.set('refreshToken', data.refreshToken, { expires: 7 });
+    Cookies.set('accessToken', data.access_token, { expires: 1 });
+    Cookies.set('refreshToken', data.refresh_token, { expires: 7 });
     Cookies.set('user', JSON.stringify(data.user), { expires: 7 });
     setUser(data.user);
   };

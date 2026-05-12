@@ -4,6 +4,7 @@ import { useEffect, useState } from 'react';
 import toast from 'react-hot-toast';
 import { Plus, Pencil, Trash2, X, Check } from 'lucide-react';
 import { usersApi, User } from '@/lib/api/users';
+import { maskBrazilPhoneInput, phoneDigitsOnly } from '@/lib/utils';
 
 type UserRole = 'professional' | 'client';
 
@@ -61,7 +62,7 @@ export default function UsuariosAdminPage() {
       email: u.email,
       password: '',
       role: u.role === 'admin' ? 'professional' : (u.role as UserRole),
-      phone: u.phone || '',
+      phone: u.phone ? maskBrazilPhoneInput(u.phone) : '',
     });
     setShowForm(true);
   };
@@ -75,13 +76,19 @@ export default function UsuariosAdminPage() {
       if (editing) {
         const payload: Partial<User> & { password?: string } = {
           name: form.name, email: form.email, role: form.role,
-          phone: form.phone || undefined,
+          phone: phoneDigitsOnly(form.phone),
         };
         if (form.password) payload.password = form.password;
         await usersApi.update(editing.id, payload);
         toast.success('Usuário atualizado');
       } else {
-        await usersApi.create({ name: form.name, email: form.email, password: form.password, role: form.role, phone: form.phone || undefined });
+        await usersApi.create({
+          name: form.name,
+          email: form.email,
+          password: form.password,
+          role: form.role,
+          phone: phoneDigitsOnly(form.phone),
+        });
         toast.success('Usuário criado');
       }
       setShowForm(false);
@@ -93,7 +100,7 @@ export default function UsuariosAdminPage() {
     }
   };
 
-  const handleDelete = async (id: string, name: string) => {
+  const handleDelete = async (id: number, name: string) => {
     if (!confirm(`Remover "${name}"?`)) return;
     try {
       await usersApi.remove(id);
@@ -165,7 +172,15 @@ export default function UsuariosAdminPage() {
               </div>
               <div>
                 <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Telefone</label>
-                <input value={form.phone} onChange={(e) => setForm((f) => ({ ...f, phone: e.target.value }))} placeholder="(00) 00000-0000" className={inputClass} />
+                <input
+                  type="tel"
+                  inputMode="numeric"
+                  autoComplete="tel"
+                  value={form.phone}
+                  onChange={(e) => setForm((f) => ({ ...f, phone: maskBrazilPhoneInput(e.target.value) }))}
+                  placeholder="(00) 00000-0000"
+                  className={inputClass}
+                />
               </div>
             </div>
 
@@ -217,7 +232,7 @@ export default function UsuariosAdminPage() {
                       </div>
                     </td>
                     <td className="px-6 py-4 text-gray-500 dark:text-gray-400 hidden sm:table-cell">{u.email}</td>
-                    <td className="px-6 py-4 text-gray-500 dark:text-gray-400 hidden md:table-cell">{u.phone || '—'}</td>
+                    <td className="px-6 py-4 text-gray-500 dark:text-gray-400 hidden md:table-cell">{u.phone ? maskBrazilPhoneInput(u.phone) : '—'}</td>
                     <td className="px-6 py-4">
                       <span className={`inline-block text-xs font-medium px-2.5 py-1 rounded-full ${ROLE_COLORS[u.role] ?? ROLE_COLORS.client}`}>
                         {ROLE_LABELS[u.role] ?? u.role}

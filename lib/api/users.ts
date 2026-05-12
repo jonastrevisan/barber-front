@@ -1,13 +1,13 @@
 import api from './client';
 
 export interface User {
-  id: string;
+  id: number;
   name: string;
   email: string;
   role: string;
   phone?: string;
   avatar?: string | null;
-  tenantId: string;
+  tenant_id: number;
 }
 
 export const usersApi = {
@@ -16,9 +16,9 @@ export const usersApi = {
   list: () => api.get<User[]>('/users'),
   create: (data: Partial<User> & { password: string }) =>
     api.post<User>('/users', data),
-  update: (id: string, data: Partial<User> & { password?: string }) =>
+  update: (id: number, data: Partial<User> & { password?: string }) =>
     api.put<User>(`/users/${id}`, data),
-  remove: (id: string) => api.delete(`/users/${id}`),
+  remove: (id: number) => api.delete(`/users/${id}`),
   updateMe: (data: { name?: string; phone?: string; avatar?: null }) =>
     api.patch<User>('/users/me', data),
   uploadAvatar: (file: File) => {
@@ -26,6 +26,6 @@ export const usersApi = {
     form.append('avatar', file);
     return api.post<User>('/users/me/avatar', form);
   },
-  changePassword: (data: { currentPassword: string; newPassword: string }) =>
+  changePassword: (data: { current_password: string; new_password: string }) =>
     api.patch('/users/me/password', data),
 };

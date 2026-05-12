@@ -1,14 +1,15 @@
 import api from './client';
 
 export interface AuthResponse {
-  accessToken: string;
-  refreshToken: string;
+  access_token: string;
+  refresh_token: string;
   user: {
-    id: string;
+    id: number;
     name: string;
     email: string;
     role: string;
-    tenantId: string;
+    tenant_id: number;
+    avatar: string | null;
   };
 }
 

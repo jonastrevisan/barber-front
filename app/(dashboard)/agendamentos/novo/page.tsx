@@ -9,6 +9,7 @@ import toast from 'react-hot-toast';
 import { appointmentsApi } from '@/lib/api/appointments';
 import { servicesApi, Service } from '@/lib/api/services';
 import { usersApi, User } from '@/lib/api/users';
+import { avatarSrc } from '@/lib/utils';
 import {
   ChevronLeft,
   ChevronRight,
@@ -23,8 +24,8 @@ import {
 import Link from 'next/link';
 
 const schema = z.object({
-  serviceId: z.string().min(1, 'Selecione um serviço'),
-  professionalId: z.string().min(1, 'Selecione um profissional'),
+  serviceId: z.number({ error: 'Selecione um serviço' }).positive(),
+  professionalId: z.number({ error: 'Selecione um profissional' }).positive(),
   date: z.string().min(1, 'Selecione uma data'),
   startTime: z.string().min(1, 'Selecione um horário'),
   notes: z.string().optional(),
@@ -83,7 +84,7 @@ export default function NovoAgendamentoPage() {
     }
     setLoadingDates(true);
     appointmentsApi
-      .availableDates({ serviceId, professionalId, month: calendarMonth })
+      .availableDates({ service_id: serviceId, professional_id: professionalId, month: calendarMonth })
       .then((r) => setAvailableDates(new Set(r.data)))
       .catch(() => toast.error('Erro ao buscar datas disponíveis'))
       .finally(() => setLoadingDates(false));
@@ -94,7 +95,7 @@ export default function NovoAgendamentoPage() {
     setLoadingSlots(true);
     setValue('startTime', '');
     appointmentsApi
-      .availableSlots({ serviceId, professionalId, date })
+      .availableSlots({ service_id: serviceId, professional_id: professionalId, date })
       .then((r) => setSlots(r.data.slots))
       .catch(() => toast.error('Erro ao buscar horários'))
       .finally(() => setLoadingSlots(false));
@@ -102,7 +103,13 @@ export default function NovoAgendamentoPage() {
 
   const onSubmit = async (data: FormData) => {
     try {
-      await appointmentsApi.create(data);
+      await appointmentsApi.create({
+        service_id: data.serviceId,
+        professional_id: data.professionalId,
+        date: data.date,
+        start_time: data.startTime,
+        notes: data.notes,
+      });
       toast.success('Agendamento realizado!');
       router.push('/agendamentos');
     } catch (err) {
@@ -177,7 +184,7 @@ export default function NovoAgendamentoPage() {
                   <div className={`flex items-center gap-3 mt-3 text-xs font-medium ${serviceId === s.id ? 'text-slate-300' : 'text-gray-500 dark:text-gray-400'}`}>
                     <span className="flex items-center gap-1">
                       <Clock size={11} />
-                      {s.durationMinutes} min
+                      {s.duration_minutes} min
                     </span>
                     <span className={`${serviceId === s.id ? 'text-white' : 'text-slate-700 dark:text-slate-300'} font-semibold`}>
                       R$ {Number(s.price).toFixed(2)}
@@ -207,11 +214,19 @@ export default function NovoAgendamentoPage() {
                       : 'border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800 hover:border-slate-300 dark:hover:border-slate-600 hover:shadow-sm'
                   }`}
                 >
-                  <div className={`w-9 h-9 rounded-full flex items-center justify-center text-sm font-bold shrink-0 ${
-                    professionalId === p.id ? 'bg-white/20 text-white' : 'bg-slate-100 dark:bg-slate-700 text-slate-600 dark:text-slate-300'
-                  }`}>
-                    {p.name.charAt(0).toUpperCase()}
-                  </div>
+                  {avatarSrc(p.avatar) ? (
+                    <img
+                      src={avatarSrc(p.avatar)!}
+                      alt={p.name}
+                      className="w-9 h-9 rounded-full object-cover shrink-0"
+                    />
+                  ) : (
+                    <div className={`w-9 h-9 rounded-full flex items-center justify-center text-sm font-bold shrink-0 ${
+                      professionalId === p.id ? 'bg-white/20 text-white' : 'bg-slate-100 dark:bg-slate-700 text-slate-600 dark:text-slate-300'
+                    }`}>
+                      {p.name.charAt(0).toUpperCase()}
+                    </div>
+                  )}
                   <div className="text-left min-w-0">
                     <p className={`font-semibold text-sm truncate ${professionalId === p.id ? 'text-white' : 'text-gray-900 dark:text-white'}`}>
                       {p.name}
@@ -358,7 +373,7 @@ export default function NovoAgendamentoPage() {
                 icon={<Scissors size={14} />}
                 label="Serviço"
                 value={selectedService?.name}
-                sub={selectedService ? `${selectedService.durationMinutes} min · R$ ${Number(selectedService.price).toFixed(2)}` : undefined}
+                sub={selectedService ? `${selectedService.duration_minutes} min · R$ ${Number(selectedService.price).toFixed(2)}` : undefined}
               />
               <SummaryRow
                 icon={<UserIcon size={14} />}

@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from 'react';
 import toast from 'react-hot-toast';
-import { Plus, Pencil, Trash2, X, Check } from 'lucide-react';
+import { Plus, Pencil, Trash2, X, Check, ToggleLeft, ToggleRight } from 'lucide-react';
 import { servicesApi, Service } from '@/lib/api/services';
 
 interface ServiceForm {
@@ -13,6 +13,10 @@ interface ServiceForm {
 }
 
 const empty: ServiceForm = { name: '', description: '', durationMinutes: 30, price: 0 };
+
+function toApiPayload(form: ServiceForm) {
+  return { name: form.name, description: form.description, duration_minutes: form.durationMinutes, price: form.price };
+}
 
 const inputClass = 'w-full border border-gray-300 dark:border-gray-600 rounded-lg px-3 py-2 text-sm bg-white dark:bg-gray-700 text-gray-900 dark:text-white placeholder-gray-400 dark:placeholder-gray-500 focus:outline-none focus:ring-2 focus:ring-slate-500';
 
@@ -52,7 +56,7 @@ export default function ServicosAdminPage() {
   const openEdit = (s: Service) => {
     setEditing(s);
     const price = Number(s.price);
-    setForm({ name: s.name, description: s.description || '', durationMinutes: s.durationMinutes, price });
+    setForm({ name: s.name, description: s.description || '', durationMinutes: s.duration_minutes, price });
     setPriceDisplay(formatBRL(Math.round(price * 100)));
     setShowForm(true);
   };
@@ -70,10 +74,10 @@ export default function ServicosAdminPage() {
     setSaving(true);
     try {
       if (editing) {
-        await servicesApi.update(editing.id, form);
+        await servicesApi.update(editing.id, toApiPayload(form));
         toast.success('Serviço atualizado');
       } else {
-        await servicesApi.create(form);
+        await servicesApi.create(toApiPayload(form));
         toast.success('Serviço criado');
       }
       setShowForm(false);
@@ -85,7 +89,17 @@ export default function ServicosAdminPage() {
     }
   };
 
-  const handleDelete = async (id: string, name: string) => {
+  const handleToggleActive = async (id: number, isActive: boolean) => {
+    try {
+      await servicesApi.toggleActive(id);
+      toast.success(isActive ? 'Serviço desativado' : 'Serviço ativado');
+      load();
+    } catch {
+      toast.error('Erro ao alterar serviço');
+    }
+  };
+
+  const handleDelete = async (id: number, name: string) => {
     if (!confirm(`Remover "${name}"?`)) return;
     try {
       await servicesApi.remove(id);
@@ -221,15 +235,29 @@ export default function ServicosAdminPage() {
               </thead>
               <tbody className="divide-y divide-gray-100 dark:divide-gray-700">
                 {services.map((s) => (
-                  <tr key={s.id} className="hover:bg-gray-50 dark:hover:bg-gray-700 transition-colors">
-                    <td className="px-6 py-4 font-medium text-gray-900 dark:text-white">{s.name}</td>
+                  <tr key={s.id} className={`transition-colors ${s.is_active ? 'hover:bg-gray-50 dark:hover:bg-gray-700' : 'opacity-50 bg-gray-50 dark:bg-gray-900/50'}`}>
+                    <td className="px-6 py-4">
+                      <div className="flex items-center gap-2">
+                        <span className="font-medium text-gray-900 dark:text-white">{s.name}</span>
+                        {!s.is_active && (
+                          <span className="text-xs bg-gray-200 dark:bg-gray-700 text-gray-500 dark:text-gray-400 px-1.5 py-0.5 rounded">Inativo</span>
+                        )}
+                      </div>
+                    </td>
                     <td className="px-6 py-4 text-gray-500 dark:text-gray-400 max-w-xs truncate hidden sm:table-cell">{s.description || '—'}</td>
-                    <td className="px-6 py-4 text-gray-700 dark:text-gray-300">{s.durationMinutes} min</td>
+                    <td className="px-6 py-4 text-gray-700 dark:text-gray-300">{s.duration_minutes} min</td>
                     <td className="px-6 py-4 text-gray-700 dark:text-gray-300">R$ {Number(s.price).toFixed(2)}</td>
                     <td className="px-6 py-4">
                       <div className="flex items-center justify-end gap-2">
                         <button onClick={() => openEdit(s)} className="text-gray-400 hover:text-slate-700 dark:hover:text-slate-300 transition-colors p-1" title="Editar">
                           <Pencil size={16} />
+                        </button>
+                        <button
+                          onClick={() => handleToggleActive(s.id, s.is_active)}
+                          className={`transition-colors p-1 ${s.is_active ? 'text-gray-400 hover:text-yellow-600 dark:hover:text-yellow-400' : 'text-gray-400 hover:text-emerald-600 dark:hover:text-emerald-400'}`}
+                          title={s.is_active ? 'Desativar' : 'Ativar'}
+                        >
+                          {s.is_active ? <ToggleRight size={16} /> : <ToggleLeft size={16} />}
                         </button>
                         <button onClick={() => handleDelete(s.id, s.name)} className="text-gray-400 hover:text-red-600 dark:hover:text-red-400 transition-colors p-1" title="Remover">
                           <Trash2 size={16} />

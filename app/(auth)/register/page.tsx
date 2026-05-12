@@ -38,7 +38,7 @@ export default function RegisterPage() {
       const res = await authApi.register({ name, email, password });
       login(res.data);
       toast.success('Conta criada com sucesso!');
-      router.push('/agendamentos');
+      router.push('/dashboard');
     } catch (err: any) {
       toast.error(err.response?.data?.message || 'Erro ao criar conta');
     }
