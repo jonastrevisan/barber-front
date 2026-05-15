@@ -1,5 +1,15 @@
 import api from './client';
 
+export interface ScheduleBlock {
+  id: number;
+  professional_id: number;
+  professional?: { id: number; name: string };
+  date: string;
+  start_time: string;
+  end_time: string;
+  description?: string;
+}
+
 export interface Appointment {
   id: number;
   date: string;
@@ -46,4 +56,22 @@ export const appointmentsApi = {
   }) => api.post<Appointment>('/appointments', data),
   cancel: (id: number) => api.patch(`/appointments/${id}/cancel`),
   complete: (id: number) => api.patch(`/appointments/${id}/complete`),
+  createBlock: (data: {
+    professional_id: number;
+    date: string;
+    start_time: string;
+    end_time: string;
+    description?: string;
+  }) => api.post<ScheduleBlock>('/schedule-blocks', data),
+  createBlockBatch: (blocks: {
+    professional_id: number;
+    date: string;
+    start_time: string;
+    end_time: string;
+    description?: string;
+  }[]) => api.post<ScheduleBlock[]>('/schedule-blocks/batch', { blocks }),
+  listBlocks: (params?: { from?: string; to?: string; professional_id?: number }) =>
+    api.get<ScheduleBlock[]>('/schedule-blocks', { params }),
+  deleteBlock: (id: number) => api.delete(`/schedule-blocks/${id}`),
+  deleteBlockBatch: (ids: number[]) => api.delete('/schedule-blocks/batch', { data: { ids } }),
 };

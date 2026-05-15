@@ -10,8 +10,12 @@ import {
   Check,
   Clock,
   User,
+  Lock,
+  Calendar,
+  RefreshCw,
+  AlertTriangle,
 } from "lucide-react";
-import { appointmentsApi, Appointment } from "@/lib/api/appointments";
+import { appointmentsApi, Appointment, ScheduleBlock } from "@/lib/api/appointments";
 import { schedulesApi, type Schedule } from "@/lib/api/schedules";
 import { usersApi, User as ApiUser } from "@/lib/api/users";
 import { servicesApi, Service } from "@/lib/api/services";
@@ -271,6 +275,7 @@ interface CreateProps {
   selfRole: string;
   onClose(): void;
   onCreated(): void;
+  onBlock(): void;
 }
 function CreateModal({
   date,
@@ -283,6 +288,7 @@ function CreateModal({
   selfRole,
   onClose,
   onCreated,
+  onBlock,
 }: CreateProps) {
   const [profId, setProfId] = useState(
     selfRole === "professional" ? selfId : (professionals[0]?.id ?? 0),
@@ -294,7 +300,6 @@ function CreateModal({
   const [d, setD] = useState(date);
   const [t, setT] = useState(time);
   const [notes, setNotes] = useState("");
-  const [saving, setSaving] = useState(false);
   const [availableSlots, setAvailableSlots] = useState<string[]>([]);
   const [loadingSlots, setLoadingSlots] = useState(false);
   const [slotsError, setSlotsError] = useState(false);
@@ -386,24 +391,18 @@ function CreateModal({
       return toast.error(
         "Horário indisponível: fora do expediente, em dia bloqueado ou já ocupado para este serviço.",
       );
-    setSaving(true);
-    try {
-      await appointmentsApi.create({
-        professional_id: profId,
-        service_id: svcId,
-        date: d,
-        start_time: coerceApiStartTime(matchedSlot, pickedMin!),
-        notes: notes || undefined,
-        client_id: clientId,
-      });
-      toast.success("Agendamento criado");
-      onCreated();
-      onClose();
-    } catch (err: any) {
-      toast.error(err?.response?.data?.message ?? "Erro ao criar");
-    } finally {
-      setSaving(false);
-    }
+    onClose();
+    const tid = toast.loading("Criando agendamento...");
+    appointmentsApi.create({
+      professional_id: profId,
+      service_id: svcId,
+      date: d,
+      start_time: coerceApiStartTime(matchedSlot, pickedMin!),
+      notes: notes || undefined,
+      client_id: clientId,
+    })
+      .then(() => { toast.success("Agendamento criado", { id: tid }); onCreated(); })
+      .catch((err: any) => { toast.error(err?.response?.data?.message ?? "Erro ao criar", { id: tid }); onCreated(); });
   }
 
   return (
@@ -547,7 +546,6 @@ function CreateModal({
           <button
             type="submit"
             disabled={
-              saving ||
               (selfRole !== "client" && clients.length === 0) ||
               services.length === 0 ||
               loadingSlots ||
@@ -556,8 +554,528 @@ function CreateModal({
             }
             className="w-full bg-slate-900 dark:bg-slate-700 text-white rounded-xl py-2.5 text-sm font-semibold hover:bg-slate-800 dark:hover:bg-slate-600 transition-colors disabled:opacity-60"
           >
-            {saving ? "Salvando..." : "Criar agendamento"}
+            Criar agendamento
           </button>
+          <button
+            type="button"
+            onClick={onBlock}
+            className="w-full flex items-center justify-center gap-2 border border-gray-200 dark:border-gray-700 text-gray-500 dark:text-gray-400 rounded-xl py-2.5 text-sm font-medium hover:bg-gray-50 dark:hover:bg-gray-800 transition-colors"
+          >
+            <Lock size={14} />
+            Bloqueio de horário
+          </button>
+        </form>
+      </div>
+    </div>
+  );
+}
+
+/* ── Block detail modal ─────────────────────────────────── */
+interface BlockDetailProps {
+  block: ScheduleBlock;
+  isAdmin: boolean;
+  isProfessional: boolean;
+  onClose(): void;
+  onDeleted(): void;
+}
+function BlockDetail({ block, isAdmin, isProfessional, onClose, onDeleted }: BlockDetailProps) {
+  /* null = initial, "checking" = fetching similar, ScheduleBlock[] = similar found */
+  const [similar, setSimilar] = useState<null | "checking" | ScheduleBlock[]>(null);
+
+  const dateObj = new Date(block.date + "T12:00:00");
+  const dateFmt = dateObj.toLocaleDateString("pt-BR", {
+    weekday: "long", day: "2-digit", month: "long", year: "numeric",
+  });
+
+  async function handleDeleteClick() {
+    setSimilar("checking");
+    try {
+      const res = await appointmentsApi.listBlocks({ professional_id: block.professional_id });
+      const found = res.data.filter(
+        (b) =>
+          b.id !== block.id &&
+          b.start_time === block.start_time &&
+          b.end_time === block.end_time &&
+          (b.description ?? "") === (block.description ?? ""),
+      );
+      if (found.length === 0) {
+        /* no similar — delete directly */
+        await doDelete([block.id]);
+      } else {
+        setSimilar(found);
+      }
+    } catch {
+      toast.error("Erro ao verificar bloqueios semelhantes");
+      setSimilar(null);
+    }
+  }
+
+  function doDelete(ids: number[]) {
+    onClose();
+    const tid = toast.loading(ids.length > 1 ? `Removendo ${ids.length} bloqueios...` : "Removendo bloqueio...");
+    const req = ids.length === 1
+      ? appointmentsApi.deleteBlock(ids[0])
+      : appointmentsApi.deleteBlockBatch(ids);
+    req
+      .then(() => { toast.success(ids.length > 1 ? `${ids.length} bloqueios removidos` : "Bloqueio removido", { id: tid }); onDeleted(); })
+      .catch(() => { toast.error("Erro ao remover bloqueio", { id: tid }); onDeleted(); });
+  }
+
+  const similarList = Array.isArray(similar) ? similar : [];
+
+  return (
+    <div
+      className="fixed inset-0 z-50 flex items-end sm:items-center justify-center bg-black/30 backdrop-blur-sm p-4"
+      onClick={onClose}
+    >
+      <div
+        className="bg-white dark:bg-gray-800 rounded-2xl shadow-2xl w-full max-w-sm border border-gray-200 dark:border-gray-700"
+        onClick={(e) => e.stopPropagation()}
+      >
+        <div className="flex items-start gap-3 px-5 py-4 border-b border-gray-100 dark:border-gray-700 rounded-t-2xl border-l-4 border-l-gray-400 dark:border-l-gray-500">
+          <div className="flex-1 min-w-0">
+            <div className="flex items-center gap-1.5">
+              <Lock size={14} className="text-gray-500 dark:text-gray-400 shrink-0" />
+              <p className="font-semibold text-gray-900 dark:text-white">Bloqueio de horário</p>
+            </div>
+            <p className="text-xs text-gray-500 dark:text-gray-400 mt-0.5">
+              {block.start_time.slice(0, 5)} – {block.end_time.slice(0, 5)}
+            </p>
+          </div>
+          <button
+            onClick={onClose}
+            className="p-1 rounded-lg hover:bg-gray-100 dark:hover:bg-gray-700 transition-colors shrink-0"
+          >
+            <X size={18} className="text-gray-500" />
+          </button>
+        </div>
+
+        <div className="px-5 py-4 space-y-2.5">
+          <div className="flex items-center gap-2 text-sm text-gray-700 dark:text-gray-300">
+            <Calendar size={14} className="text-gray-400 shrink-0" />
+            <span className="capitalize">{dateFmt}</span>
+          </div>
+          {block.professional && (
+            <div className="flex items-center gap-2 text-sm text-gray-700 dark:text-gray-300">
+              <User size={14} className="text-gray-400 shrink-0" />
+              <span>{block.professional.name}</span>
+              <span className="text-xs text-gray-400">· profissional</span>
+            </div>
+          )}
+          {block.description && (
+            <p className="text-sm text-gray-500 dark:text-gray-400 italic">
+              "{block.description}"
+            </p>
+          )}
+        </div>
+
+        {(isAdmin || isProfessional) && (
+          <div className="px-5 pb-5 space-y-2">
+            {/* similar confirmation panel */}
+            {Array.isArray(similar) && similarList.length > 0 && (
+              <div className="rounded-xl border border-amber-200 dark:border-amber-700 bg-amber-50 dark:bg-amber-900/20 p-3.5 space-y-2.5">
+                <p className="text-xs text-amber-700 dark:text-amber-400 font-medium">
+                  Encontrados {similarList.length + 1} bloqueios semelhantes. Remover qual?
+                </p>
+                <button
+                  onClick={() => doDelete([block.id])}
+                  disabled={false}
+                  className="w-full flex items-center justify-center gap-2 border border-red-200 dark:border-red-800 bg-white dark:bg-gray-800 hover:bg-red-50 dark:hover:bg-red-900/20 text-red-600 dark:text-red-400 rounded-lg py-2 text-sm font-medium transition-colors disabled:opacity-60"
+                >
+                  Remover apenas este
+                </button>
+                <button
+                  onClick={() => doDelete([block.id, ...similarList.map((b) => b.id)])}
+                  disabled={false}
+                  className="w-full flex items-center justify-center gap-2 bg-red-500 hover:bg-red-600 text-white rounded-lg py-2 text-sm font-semibold transition-colors disabled:opacity-60"
+                >
+                  {`Remover todos (${similarList.length + 1})`}
+                </button>
+                <button
+                  onClick={() => setSimilar(null)}
+                  disabled={false}
+                  className="w-full text-xs text-gray-400 hover:text-gray-600 dark:hover:text-gray-300 transition-colors"
+                >
+                  Cancelar
+                </button>
+              </div>
+            )}
+
+            {/* initial delete button */}
+            {similar === null && (
+              <button
+                onClick={handleDeleteClick}
+                disabled={false}
+                className="w-full flex items-center justify-center gap-2 border border-red-200 dark:border-red-800 bg-red-50 hover:bg-red-100 dark:bg-red-900/30 dark:hover:bg-red-900/50 text-red-600 dark:text-red-400 rounded-xl py-2.5 text-sm font-medium transition-colors disabled:opacity-60"
+              >
+                <X size={15} /> Remover bloqueio
+              </button>
+            )}
+
+            {similar === "checking" && (
+              <p className="text-xs text-center text-gray-400 py-2">Verificando bloqueios semelhantes...</p>
+            )}
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+/* ── Block modal ─────────────────────────────────────────── */
+interface BlockProps {
+  date: string;
+  time: string;
+  professionals: ApiUser[];
+  selfId: number;
+  selfRole: string;
+  onClose(): void;
+  onCreated(): void;
+}
+function BlockModal({
+  date,
+  time,
+  professionals,
+  selfId,
+  selfRole,
+  onClose,
+  onCreated,
+}: BlockProps) {
+  const professionalOptions = useMemo(
+    () => professionals.map((p) => ({ id: p.id, label: p.name })),
+    [professionals],
+  );
+
+  const [profId, setProfId] = useState(
+    selfRole === "professional" ? selfId : (professionals[0]?.id ?? 0),
+  );
+  const [d, setD] = useState(date);
+  const [startTime, setStartTime] = useState(time);
+  const [endTime, setEndTime] = useState(() => {
+    const [h, m] = time.split(":").map(Number);
+    const total = h * 60 + m + 60;
+    return `${String(Math.floor(total / 60) % 24).padStart(2, "0")}:${String(total % 60).padStart(2, "0")}`;
+  });
+  const [description, setDescription] = useState("");
+
+  /* repeat */
+  const [repeat, setRepeat] = useState(false);
+  const [repeatEvery, setRepeatEvery] = useState(7);
+  const [repeatUnit, setRepeatUnit] = useState<"day" | "week">("day");
+
+  const maxRepeatUntil = useMemo(() => {
+    if (!d) return "";
+    const base = new Date(d + "T12:00:00");
+    base.setFullYear(base.getFullYear() + 1);
+    return base.toISOString().split("T")[0];
+  }, [d]);
+
+  const [repeatUntil, setRepeatUntil] = useState(maxRepeatUntil);
+
+  /* keep repeatUntil within bounds when base date changes */
+  useEffect(() => {
+    if (!maxRepeatUntil) return;
+    if (!repeatUntil || repeatUntil > maxRepeatUntil) setRepeatUntil(maxRepeatUntil);
+  }, [maxRepeatUntil]);
+
+  /* compute all dates to create */
+  const repeatDates = useMemo(() => {
+    if (!repeat || !d || !repeatUntil) return [];
+    const stepDays = repeatUnit === "week" ? repeatEvery * 7 : repeatEvery;
+    const dates: string[] = [];
+    const until = new Date(repeatUntil + "T12:00:00");
+    let cur = new Date(d + "T12:00:00");
+    cur.setDate(cur.getDate() + stepDays);
+    while (cur <= until) {
+      dates.push(cur.toISOString().split("T")[0]);
+      cur.setDate(cur.getDate() + stepDays);
+    }
+    return dates;
+  }, [repeat, d, repeatEvery, repeatUnit, repeatUntil]);
+
+  const nextDate = repeatDates[0];
+  const nextDateFmt = nextDate
+    ? new Date(nextDate + "T12:00:00").toLocaleDateString("pt-BR", {
+        weekday: "short", day: "2-digit", month: "2-digit", year: "numeric",
+      })
+    : null;
+
+  /* conflict check state: null = not checked, "checking" = loading, string[] = conflicting dates */
+  const [conflictDates, setConflictDates] = useState<null | "checking" | string[]>(null);
+
+  function saveBlocks(datesToSave: string[]) {
+    onClose();
+    const tid = toast.loading(
+      datesToSave.length > 1 ? `Criando ${datesToSave.length} bloqueios...` : "Criando bloqueio...",
+    );
+    const payload = datesToSave.map((date) => ({
+      professional_id: profId,
+      date,
+      start_time: `${startTime}:00`,
+      end_time: `${endTime}:00`,
+      description: description || undefined,
+    }));
+    const req = datesToSave.length === 1
+      ? appointmentsApi.createBlock(payload[0])
+      : appointmentsApi.createBlockBatch(payload);
+    req
+      .then(() => { toast.success(datesToSave.length > 1 ? `${datesToSave.length} bloqueios criados` : "Bloqueio criado", { id: tid }); onCreated(); })
+      .catch((err: any) => { toast.error(err?.response?.data?.message ?? "Erro ao criar bloqueio", { id: tid }); onCreated(); });
+  }
+
+  async function submit(e: React.FormEvent) {
+    e.preventDefault();
+    if (!profId || !d || !startTime || !endTime)
+      return toast.error("Preencha todos os campos");
+    if (startTime >= endTime)
+      return toast.error("Horário de término deve ser após o início");
+
+    const allDates = [d, ...repeatDates];
+    setConflictDates("checking");
+
+    try {
+      const from = allDates[0];
+      const to = allDates[allDates.length - 1];
+      const res = await appointmentsApi.list({ from, to });
+      const blockStart = timeToMin(`${startTime}:00`);
+      const blockEnd = timeToMin(`${endTime}:00`);
+
+      const conflicts = allDates.filter((date) =>
+        res.data.some(
+          (appt) =>
+            appt.date === date &&
+            appt.status !== "cancelled" &&
+            (appt.professional?.id === profId) &&
+            blockStart < timeToMin(appt.end_time) &&
+            blockEnd > timeToMin(appt.start_time),
+        ),
+      );
+
+      if (conflicts.length === 0) {
+        saveBlocks(allDates);
+      } else {
+        setConflictDates(conflicts);
+      }
+    } catch {
+      /* on fetch error, proceed anyway */
+      saveBlocks(allDates);
+    }
+  }
+
+  return (
+    <div
+      className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 backdrop-blur-sm p-4"
+      onClick={onClose}
+    >
+      <div
+        className="bg-white dark:bg-gray-800 rounded-2xl shadow-2xl w-full max-w-sm border border-gray-200 dark:border-gray-700"
+        onClick={(e) => e.stopPropagation()}
+      >
+        <div className="flex items-center justify-between px-5 py-4 border-b border-gray-100 dark:border-gray-700">
+          <div className="flex items-center gap-2">
+            <Lock size={16} className="text-gray-500 dark:text-gray-400" />
+            <h2 className="font-semibold text-gray-900 dark:text-white">
+              Bloqueio de horário
+            </h2>
+          </div>
+          <button
+            onClick={onClose}
+            className="p-1 rounded-lg hover:bg-gray-100 dark:hover:bg-gray-700 transition-colors"
+          >
+            <X size={18} className="text-gray-500" />
+          </button>
+        </div>
+        <form onSubmit={submit} className="p-5 space-y-3.5">
+          {selfRole !== "professional" && (
+            <div>
+              <label className={LABEL}>Profissional</label>
+              <SearchableSelect
+                options={professionalOptions}
+                value={profId}
+                onChange={setProfId}
+                disabled={professionals.length === 0}
+                placeholder="Filtrar por nome…"
+                emptyMessage="Nenhum profissional encontrado"
+                noOptionsMessage="Nenhum profissional cadastrado"
+              />
+            </div>
+          )}
+          <div>
+            <label className={LABEL}>Data</label>
+            <input
+              type="date"
+              value={d}
+              onChange={(e) => setD(e.target.value)}
+              required
+              className={INPUT}
+            />
+          </div>
+          <div className="grid grid-cols-2 gap-3">
+            <div>
+              <label className={LABEL}>Início</label>
+              <input
+                type="time"
+                step={60}
+                value={startTime}
+                onChange={(e) => setStartTime(e.target.value)}
+                required
+                className={INPUT}
+              />
+            </div>
+            <div>
+              <label className={LABEL}>Término</label>
+              <input
+                type="time"
+                step={60}
+                value={endTime}
+                onChange={(e) => setEndTime(e.target.value)}
+                required
+                className={INPUT}
+              />
+            </div>
+          </div>
+          <div>
+            <label className={LABEL}>Descrição</label>
+            <textarea
+              value={description}
+              onChange={(e) => setDescription(e.target.value)}
+              rows={2}
+              placeholder="Ex: Almoço, Reunião..."
+              className={`${INPUT} resize-none`}
+            />
+          </div>
+
+          {/* Repeat toggle */}
+          <div className="border border-gray-200 dark:border-gray-700 rounded-xl overflow-hidden">
+            <button
+              type="button"
+              onClick={() => setRepeat((v) => !v)}
+              className="w-full flex items-center justify-between px-3.5 py-2.5 hover:bg-gray-50 dark:hover:bg-gray-700/50 transition-colors"
+            >
+              <span className="flex items-center gap-2 text-sm font-medium text-rose-500 dark:text-rose-400">
+                <RefreshCw size={14} />
+                Repetir Bloqueio de Horário
+              </span>
+              {/* toggle pill */}
+              <div className={`w-9 h-5 rounded-full transition-colors ${repeat ? "bg-rose-500" : "bg-gray-300 dark:bg-gray-600"}`}>
+                <div className={`w-4 h-4 bg-white rounded-full shadow mt-0.5 transition-transform ${repeat ? "translate-x-4" : "translate-x-0.5"}`} />
+              </div>
+            </button>
+
+            {repeat && (
+              <div className="px-3.5 pb-3.5 pt-1 space-y-2.5 border-t border-gray-100 dark:border-gray-700">
+                <div className="flex items-center gap-2">
+                  <span className="text-xs text-gray-500 dark:text-gray-400 shrink-0">Repetir a cada:</span>
+                  <input
+                    type="number"
+                    min={1}
+                    max={365}
+                    value={repeatEvery}
+                    onChange={(e) => setRepeatEvery(Math.max(1, Number(e.target.value)))}
+                    className="w-14 text-center rounded-lg border border-gray-200 dark:border-gray-600 bg-white dark:bg-gray-700 text-sm text-gray-900 dark:text-white py-1 px-1"
+                  />
+                  <select
+                    value={repeatUnit}
+                    onChange={(e) => setRepeatUnit(e.target.value as "day" | "week")}
+                    className="rounded-lg border border-gray-200 dark:border-gray-600 bg-white dark:bg-gray-700 text-sm text-gray-900 dark:text-white py-1 px-2"
+                  >
+                    <option value="day">Dia(s)</option>
+                    <option value="week">Semana(s)</option>
+                  </select>
+                </div>
+
+                {nextDateFmt && (
+                  <p className="text-xs text-gray-500 dark:text-gray-400">
+                    Próxima repetição: <span className="font-medium">{nextDateFmt}</span>
+                  </p>
+                )}
+
+                <div>
+                  <label className="text-xs text-gray-500 dark:text-gray-400 block mb-1">Repetir até a data:</label>
+                  <input
+                    type="date"
+                    value={repeatUntil}
+                    min={d}
+                    max={maxRepeatUntil}
+                    onChange={(e) => setRepeatUntil(e.target.value)}
+                    required={repeat}
+                    className={INPUT}
+                  />
+                </div>
+
+                {repeatDates.length > 0 && (
+                  <p className="text-xs text-rose-500 dark:text-rose-400 font-medium">
+                    {repeatDates.length + 1} bloqueios serão criados
+                  </p>
+                )}
+              </div>
+            )}
+          </div>
+
+          {/* Conflict panel */}
+          {conflictDates === "checking" && (
+            <p className="text-xs text-center text-gray-400 py-1">Verificando conflitos...</p>
+          )}
+          {Array.isArray(conflictDates) && conflictDates.length > 0 && (() => {
+            const allDates = [d, ...repeatDates];
+            const safeDates = allDates.filter((dt) => !conflictDates.includes(dt));
+            return (
+              <div className="rounded-xl border border-amber-200 dark:border-amber-700 bg-amber-50 dark:bg-amber-900/20 p-3.5 space-y-2.5">
+                <div className="flex items-start gap-2">
+                  <AlertTriangle size={14} className="text-amber-500 shrink-0 mt-0.5" />
+                  <div>
+                    <p className="text-xs font-medium text-amber-700 dark:text-amber-400">
+                      {conflictDates.length === 1
+                        ? "1 data tem agendamento neste horário"
+                        : `${conflictDates.length} datas têm agendamentos neste horário`}
+                    </p>
+                    <p className="text-[11px] text-amber-600 dark:text-amber-500 mt-0.5">
+                      {conflictDates
+                        .map((dt) =>
+                          new Date(dt + "T12:00:00").toLocaleDateString("pt-BR", {
+                            day: "2-digit", month: "2-digit",
+                          }),
+                        )
+                        .join(", ")}
+                    </p>
+                  </div>
+                </div>
+                {safeDates.length > 0 && (
+                  <button
+                    type="button"
+                    onClick={() => saveBlocks(safeDates)}
+                    className="w-full bg-slate-900 dark:bg-slate-700 text-white rounded-lg py-2 text-sm font-semibold hover:bg-slate-800 transition-colors"
+                  >
+                    Salvar apenas sem conflito ({safeDates.length})
+                  </button>
+                )}
+                <button
+                  type="button"
+                  onClick={() => saveBlocks(allDates)}
+                  className="w-full border border-amber-300 dark:border-amber-600 text-amber-700 dark:text-amber-400 rounded-lg py-2 text-sm font-medium hover:bg-amber-100 dark:hover:bg-amber-900/30 transition-colors"
+                >
+                  Salvar todos mesmo assim ({allDates.length})
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setConflictDates(null)}
+                  className="w-full text-xs text-gray-400 hover:text-gray-600 dark:hover:text-gray-300 transition-colors"
+                >
+                  Cancelar
+                </button>
+              </div>
+            );
+          })()}
+
+          {conflictDates === null && (
+            <button
+              type="submit"
+              disabled={!profId || !d || !startTime || !endTime}
+              className="w-full bg-slate-900 dark:bg-slate-700 text-white rounded-xl py-2.5 text-sm font-semibold hover:bg-slate-800 dark:hover:bg-slate-600 transition-colors disabled:opacity-60"
+            >
+              Salvar bloqueio
+            </button>
+          )}
         </form>
       </div>
     </div>
@@ -774,10 +1292,85 @@ function ApptDetail({
   );
 }
 
+/* ── Confirm dialog ─────────────────────────────────────── */
+interface ConfirmDialogProps {
+  title: string;
+  description?: string;
+  confirmLabel?: string;
+  cancelLabel?: string;
+  variant?: "danger" | "warning";
+  onConfirm(): void;
+  onCancel(): void;
+}
+function ConfirmDialog({
+  title,
+  description,
+  confirmLabel = "Confirmar",
+  cancelLabel = "Cancelar",
+  variant = "danger",
+  onConfirm,
+  onCancel,
+}: ConfirmDialogProps) {
+  const isDanger = variant === "danger";
+  return (
+    <div
+      className="fixed inset-0 z-[60] flex items-center justify-center bg-black/40 backdrop-blur-sm p-4"
+      onClick={onCancel}
+    >
+      <div
+        className="bg-white dark:bg-gray-800 rounded-2xl shadow-2xl w-full max-w-xs border border-gray-200 dark:border-gray-700 overflow-hidden"
+        onClick={(e) => e.stopPropagation()}
+      >
+        <div className="flex flex-col items-center px-6 pt-7 pb-5 text-center">
+          <div
+            className={`w-12 h-12 rounded-full flex items-center justify-center mb-4 ${
+              isDanger
+                ? "bg-red-100 dark:bg-red-900/30"
+                : "bg-amber-100 dark:bg-amber-900/30"
+            }`}
+          >
+            <AlertTriangle
+              size={22}
+              className={isDanger ? "text-red-500" : "text-amber-500"}
+            />
+          </div>
+          <p className="font-semibold text-gray-900 dark:text-white text-base leading-snug">
+            {title}
+          </p>
+          {description && (
+            <p className="text-sm text-gray-500 dark:text-gray-400 mt-1.5 leading-snug">
+              {description}
+            </p>
+          )}
+        </div>
+        <div className="flex border-t border-gray-100 dark:border-gray-700">
+          <button
+            onClick={onCancel}
+            className="flex-1 py-3.5 text-sm font-medium text-gray-600 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-700/50 transition-colors border-r border-gray-100 dark:border-gray-700"
+          >
+            {cancelLabel}
+          </button>
+          <button
+            onClick={onConfirm}
+            className={`flex-1 py-3.5 text-sm font-semibold transition-colors ${
+              isDanger
+                ? "text-red-500 hover:bg-red-50 dark:hover:bg-red-900/20"
+                : "text-amber-600 hover:bg-amber-50 dark:hover:bg-amber-900/20"
+            }`}
+          >
+            {confirmLabel}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 /* ── Main page ──────────────────────────────────────────── */
 export default function AgendamentosPage() {
   const { isAdmin, isProfessional, user } = useAuth();
   const [appointments, setAppointments] = useState<Appointment[]>([]);
+  const [blocks, setBlocks] = useState<ScheduleBlock[]>([]);
   const [professionals, setProfessionals] = useState<ApiUser[]>([]);
   const [allUsers, setAllUsers] = useState<ApiUser[]>([]);
   const [services, setServices] = useState<Service[]>([]);
@@ -790,7 +1383,13 @@ export default function AgendamentosPage() {
     date: string;
     time: string;
   } | null>(null);
+  const [blockSlot, setBlockSlot] = useState<{
+    date: string;
+    time: string;
+  } | null>(null);
+  const [detailBlock, setDetailBlock] = useState<ScheduleBlock | null>(null);
   const [detailAppt, setDetailAppt] = useState<Appointment | null>(null);
+  const [confirmDialog, setConfirmDialog] = useState<Omit<ConfirmDialogProps, "onCancel"> | null>(null);
   const [nowPx, setNowPx] = useState(0);
 
   const today = isoToday();
@@ -844,6 +1443,15 @@ export default function AgendamentosPage() {
     req
       .then((r) => { setAppointments(r.data); setLoadedKey(key); })
       .catch(() => { toast.error("Erro ao carregar agendamentos"); setLoadedKey(key); });
+  }, [isAdmin, isProfessional, fetchRange, rev]);
+
+  /* Fetch schedule blocks (admin/professional only) */
+  useEffect(() => {
+    if (!isAdmin && !isProfessional) return;
+    const [from, to] = fetchRange.split(":");
+    appointmentsApi.listBlocks({ from, to })
+      .then((r) => setBlocks(r.data))
+      .catch(() => {});
   }, [isAdmin, isProfessional, fetchRange, rev]);
 
   /* Supporting data for create modal */
@@ -913,6 +1521,17 @@ export default function AgendamentosPage() {
     for (const a of filtered) (map[a.date] ??= []).push(a);
     return map;
   }, [filtered]);
+
+  const filteredBlocks = useMemo(() => {
+    if (!filterProfId) return blocks;
+    return blocks.filter((b) => b.professional_id === filterProfId);
+  }, [blocks, filterProfId]);
+
+  const blocksByDate = useMemo(() => {
+    const map: Record<string, ScheduleBlock[]> = {};
+    for (const b of filteredBlocks) (map[b.date] ??= []).push(b);
+    return map;
+  }, [filteredBlocks]);
 
   const tryOpenCreateSlot = useCallback(
     (dateStr: string, slotTime: string) => {
@@ -1015,25 +1634,37 @@ export default function AgendamentosPage() {
     return `${MONTH_NAMES[d.getMonth()]}/${d.getFullYear()}`;
   }, [view, currentDate, viewDays]);
 
-  const handleCancel = async (id: number) => {
-    if (!confirm("Cancelar este agendamento?")) return;
-    try {
-      await appointmentsApi.cancel(id);
-      toast.success("Cancelado");
-      setRev((v) => v + 1);
-    } catch {
-      toast.error("Erro ao cancelar");
-    }
+  const handleCancel = (id: number) => {
+    setConfirmDialog({
+      title: "Cancelar agendamento?",
+      description: "Esta ação não pode ser desfeita.",
+      confirmLabel: "Cancelar agendamento",
+      cancelLabel: "Voltar",
+      variant: "danger",
+      onConfirm: () => {
+        setConfirmDialog(null);
+        const tid = toast.loading("Cancelando...");
+        appointmentsApi.cancel(id)
+          .then(() => toast.success("Agendamento cancelado", { id: tid }))
+          .catch(() => { toast.error("Erro ao cancelar", { id: tid }); setRev((v) => v + 1); });
+      },
+    });
   };
-  const handleComplete = async (id: number) => {
-    if (!confirm("Marcar como concluído?")) return;
-    try {
-      await appointmentsApi.complete(id);
-      toast.success("Concluído");
-      setRev((v) => v + 1);
-    } catch {
-      toast.error("Erro ao concluir");
-    }
+  const handleComplete = (id: number) => {
+    setConfirmDialog({
+      title: "Marcar como concluído?",
+      description: "O agendamento será finalizado.",
+      confirmLabel: "Concluir",
+      cancelLabel: "Voltar",
+      variant: "warning",
+      onConfirm: () => {
+        setConfirmDialog(null);
+        const tid = toast.loading("Concluindo...");
+        appointmentsApi.complete(id)
+          .then(() => toast.success("Concluído", { id: tid }))
+          .catch(() => { toast.error("Erro ao concluir", { id: tid }); setRev((v) => v + 1); });
+      },
+    });
   };
 
   /* ── Month grid ── */
@@ -1212,17 +1843,30 @@ export default function AgendamentosPage() {
               const appts = (byDate[iso] ?? []).sort((a, b) =>
                 a.start_time.localeCompare(b.start_time),
               );
+              const blks = (blocksByDate[iso] ?? []).sort((a, b) =>
+                a.start_time.localeCompare(b.start_time),
+              );
+
+              /* merge appts + blocks sorted by start_time */
+              type MonthItem =
+                | { kind: "appt"; appt: Appointment }
+                | { kind: "block"; blk: ScheduleBlock };
+              const items: MonthItem[] = [
+                ...appts.map((appt) => ({ kind: "appt" as const, appt, t: appt.start_time })),
+                ...blks.map((blk) => ({ kind: "block" as const, blk, t: blk.start_time })),
+              ].sort((a, b) => a.t.localeCompare(b.t));
+
               const MAX = 4;
-              const visible = appts.slice(0, MAX);
-              const extra = appts.length - MAX;
+              const visible = items.slice(0, MAX);
+              const extra = items.length - MAX;
 
               return (
                 <div
                   key={i}
-                  className={`border-t border-r border-gray-100 dark:border-gray-700/50 p-1.5 min-h-22.5 cursor-pointer group
+                  className={`border-t border-r border-gray-100 dark:border-gray-700/50 p-1.5 min-h-22.5 cursor-pointer group transition-colors hover:bg-gray-50 dark:hover:bg-gray-800/60
                     ${!current ? "bg-gray-50/60 dark:bg-gray-800/30" : ""}
-                    ${isToday ? "bg-blue-50/40 dark:bg-blue-900/10" : ""}`}
-                  onClick={() => tryOpenFromMonth(iso)}
+                    ${isToday ? "bg-blue-50/40 dark:bg-blue-900/10 hover:bg-blue-50/70 dark:hover:bg-blue-900/20" : ""}`}
+                  onClick={() => { setCurrentDate(iso); setView("day"); }}
                 >
                   <span
                     className={`inline-flex w-6 h-6 items-center justify-center rounded-full text-sm font-medium mb-1 transition-colors
@@ -1231,20 +1875,30 @@ export default function AgendamentosPage() {
                     {dd}
                   </span>
 
-                  {visible.map((appt) => {
-                    const c = svcColor(appt.service.id);
+                  {visible.map((item) => {
+                    if (item.kind === "appt") {
+                      const c = svcColor(item.appt.service.id);
+                      return (
+                        <div
+                          key={`a-${item.appt.id}`}
+                          className={`text-[11px] truncate px-1.5 py-0.5 rounded mb-0.5 cursor-pointer ${c.bg} ${c.text} ${item.appt.status === "cancelled" ? "opacity-50 line-through" : ""}`}
+                          onClick={(e) => { e.stopPropagation(); setDetailAppt(item.appt); }}
+                        >
+                          {item.appt.start_time.slice(0, 5)}{" "}
+                          {item.appt.client?.name ?? item.appt.professional?.name},{" "}
+                          {item.appt.service.name}
+                        </div>
+                      );
+                    }
                     return (
                       <div
-                        key={appt.id}
-                        className={`text-[11px] truncate px-1.5 py-0.5 rounded mb-0.5 cursor-pointer ${c.bg} ${c.text} ${appt.status === "cancelled" ? "opacity-50 line-through" : ""}`}
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          setDetailAppt(appt);
-                        }}
+                        key={`b-${item.blk.id}`}
+                        className="text-[11px] truncate px-1.5 py-0.5 rounded mb-0.5 cursor-pointer bg-gray-200 dark:bg-gray-700 text-gray-500 dark:text-gray-400 flex items-center gap-1"
+                        onClick={(e) => { e.stopPropagation(); setDetailBlock(item.blk); }}
                       >
-                        {appt.start_time.slice(0, 5)}{" "}
-                        {appt.client?.name ?? appt.professional?.name},{" "}
-                        {appt.service.name}
+                        <Lock size={9} className="shrink-0" />
+                        {item.blk.start_time.slice(0, 5)}{" "}
+                        {item.blk.description ?? item.blk.professional?.name ?? "Bloqueado"}
                       </div>
                     );
                   })}
@@ -1404,6 +2058,45 @@ export default function AgendamentosPage() {
                       </div>
                     )}
 
+                    {/* Schedule blocks (blocked periods) */}
+                    {(blocksByDate[dateStr] ?? []).map((blk) => {
+                      const startMin = timeToMin(blk.start_time) - START_HOUR * 60;
+                      const endMin = timeToMin(blk.end_time) - START_HOUR * 60;
+                      const top = (startMin / 60) * HOUR_PX;
+                      const height = Math.max(((endMin - startMin) / 60) * HOUR_PX, HOUR_PX / 2);
+                      const compact = height < HOUR_PX * 0.75;
+                      return (
+                        <div
+                          key={`blk-${blk.id}`}
+                          style={{ top: `${top + 2}px`, height: `${height - 3}px`, left: "2px", right: "2px" }}
+                          className="absolute z-[5] overflow-hidden rounded-md border-l-[3px] border-l-gray-400 dark:border-l-gray-500 px-1.5 py-1 bg-gray-100 dark:bg-gray-700/70 select-none cursor-pointer hover:opacity-80 transition-opacity"
+                          onClick={(e) => { e.stopPropagation(); setDetailBlock(blk); }}
+                        >
+                          {compact ? (
+                            <p className="text-[11px] font-semibold leading-tight truncate text-gray-500 dark:text-gray-400 flex items-center gap-1">
+                              <Lock size={9} className="shrink-0" />
+                              {blk.start_time.slice(0, 5)} · {blk.description ?? blk.professional?.name ?? "Bloqueado"}
+                            </p>
+                          ) : (
+                            <>
+                              <p className="text-[11px] font-medium leading-tight opacity-75 text-gray-500 dark:text-gray-400">
+                                {blk.start_time.slice(0, 5)} – {blk.end_time.slice(0, 5)}
+                              </p>
+                              <p className="text-[12px] font-bold leading-tight mt-0.5 truncate text-gray-600 dark:text-gray-300 flex items-center gap-1">
+                                <Lock size={10} className="shrink-0" />
+                                {blk.professional?.name ?? "Bloqueado"}
+                              </p>
+                              {blk.description && (
+                                <p className="text-[11px] leading-tight opacity-75 truncate text-gray-500 dark:text-gray-400">
+                                  {blk.description}
+                                </p>
+                              )}
+                            </>
+                          )}
+                        </div>
+                      );
+                    })}
+
                     {/* Appointment blocks */}
                     {dayLayout.map(({ appt, left, width }) => {
                       const startMin =
@@ -1477,6 +2170,22 @@ export default function AgendamentosPage() {
           selfRole={user?.role ?? ""}
           onClose={() => setCreateSlot(null)}
           onCreated={() => setRev((v) => v + 1)}
+          onBlock={() => {
+            const slot = createSlot;
+            setCreateSlot(null);
+            setBlockSlot(slot);
+          }}
+        />
+      )}
+      {blockSlot && (
+        <BlockModal
+          date={blockSlot.date}
+          time={blockSlot.time}
+          professionals={professionals}
+          selfId={user?.id ?? 0}
+          selfRole={user?.role ?? ""}
+          onClose={() => setBlockSlot(null)}
+          onCreated={() => setRev((v) => v + 1)}
         />
       )}
       {detailAppt && (
@@ -1487,6 +2196,21 @@ export default function AgendamentosPage() {
           onClose={() => setDetailAppt(null)}
           onCancel={handleCancel}
           onComplete={handleComplete}
+        />
+      )}
+      {confirmDialog && (
+        <ConfirmDialog
+          {...confirmDialog}
+          onCancel={() => setConfirmDialog(null)}
+        />
+      )}
+      {detailBlock && (
+        <BlockDetail
+          block={detailBlock}
+          isAdmin={isAdmin}
+          isProfessional={isProfessional}
+          onClose={() => setDetailBlock(null)}
+          onDeleted={() => setRev((v) => v + 1)}
         />
       )}
     </div>
