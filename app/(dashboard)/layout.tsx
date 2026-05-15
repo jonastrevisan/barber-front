@@ -18,6 +18,7 @@ import {
   Moon,
   UserCircle,
   LayoutDashboard,
+  Building2,
 } from "lucide-react";
 
 interface NavItem {
@@ -76,6 +77,7 @@ function SidebarContent({
                 admin: "Administrador",
                 professional: "Profissional",
                 client: "Cliente",
+                superadmin: "Super Admin",
               }[user.role] ?? user.role}
             </span>
           </div>
@@ -125,7 +127,7 @@ export default function DashboardLayout({
 }: {
   children: React.ReactNode;
 }) {
-  const { user, isLoading, isAdmin, isProfessional, logout } = useAuth();
+  const { user, isLoading, isAdmin, isProfessional, isSuperAdmin, logout } = useAuth();
   const { theme, toggle } = useTheme();
   const router = useRouter();
   const pathname = usePathname();
@@ -154,6 +156,11 @@ export default function DashboardLayout({
       ? [
           { href: "/admin/servicos", label: "Serviços", icon: Scissors },
           { href: "/admin/usuarios", label: "Usuários", icon: Users },
+        ]
+      : []),
+    ...(isSuperAdmin
+      ? [
+          { href: "/superadmin/tenants", label: "Tenants", icon: Building2 },
         ]
       : []),
   ];

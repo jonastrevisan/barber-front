@@ -24,8 +24,8 @@ export interface Stats {
 export const appointmentsApi = {
   stats: (params?: { from?: string; to?: string; professional_id?: number }) =>
     api.get<Stats>('/appointments/stats', { params }),
-  list: (params?: { date?: string }) => api.get<Appointment[]>('/appointments', { params }),
-  mine: () => api.get<Appointment[]>('/appointments/mine'),
+  list: (params?: { date?: string; from?: string; to?: string }) => api.get<Appointment[]>('/appointments', { params }),
+  mine: (params?: { from?: string; to?: string }) => api.get<Appointment[]>('/appointments/mine', { params }),
   availableSlots: (params: {
     professional_id: number;
     service_id: number;

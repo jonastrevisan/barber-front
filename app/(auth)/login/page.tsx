@@ -1,11 +1,13 @@
 'use client';
 
+import { useState } from 'react';
 import { useForm } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { z } from 'zod';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import toast from 'react-hot-toast';
+import { Eye, EyeOff } from 'lucide-react';
 import { authApi } from '@/lib/api/auth';
 import { useAuth } from '@/lib/auth/AuthContext';
 
@@ -21,6 +23,7 @@ const inputClass = 'w-full border border-gray-300 dark:border-gray-600 rounded-l
 export default function LoginPage() {
   const router = useRouter();
   const { login } = useAuth();
+  const [showPassword, setShowPassword] = useState(false);
   const {
     register,
     handleSubmit,
@@ -50,7 +53,16 @@ export default function LoginPage() {
 
         <div>
           <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Senha</label>
-          <input {...register('password')} type="password" placeholder="••••••" className={inputClass} />
+          <div className="relative">
+            <input {...register('password')} type={showPassword ? 'text' : 'password'} placeholder="••••••" className={`${inputClass} pr-10`} />
+            <button
+              type="button"
+              onClick={() => setShowPassword((v) => !v)}
+              className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600 dark:hover:text-gray-300 transition-colors"
+            >
+              {showPassword ? <EyeOff size={16} /> : <Eye size={16} />}
+            </button>
+          </div>
           {errors.password && <p className="text-red-500 text-xs mt-1">{errors.password.message}</p>}
         </div>
 
