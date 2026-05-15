@@ -300,6 +300,11 @@ function CreateModal({
   const [slotsError, setSlotsError] = useState(false);
   const [slotRetry, setSlotRetry] = useState(0);
 
+  const professionalOptions = useMemo(
+    () => professionals.map((p) => ({ id: p.id, label: p.name })),
+    [professionals],
+  );
+
   const clientOptions = useMemo(
     () => clients.map((c) => ({ id: c.id, label: c.name, secondary: c.email })),
     [clients],
@@ -425,17 +430,15 @@ function CreateModal({
           {selfRole !== "professional" && (
             <div>
               <label className={LABEL}>Profissional</label>
-              <select
+              <SearchableSelect
+                options={professionalOptions}
                 value={profId}
-                onChange={(e) => setProfId(Number(e.target.value))}
-                className={INPUT}
-              >
-                {professionals.map((p) => (
-                  <option key={p.id} value={p.id}>
-                    {p.name}
-                  </option>
-                ))}
-              </select>
+                onChange={setProfId}
+                disabled={professionals.length === 0}
+                placeholder="Filtrar por nome…"
+                emptyMessage="Nenhum profissional encontrado"
+                noOptionsMessage="Nenhum profissional cadastrado"
+              />
             </div>
           )}
           <div className="grid grid-cols-2 gap-3">
@@ -1064,83 +1067,123 @@ export default function AgendamentosPage() {
   return (
     <div className="flex flex-col h-full overflow-hidden bg-white dark:bg-gray-900">
       {/* ── Top bar ── */}
-      <div className="flex items-center gap-2 px-4 sm:px-5 py-3 border-b border-gray-200 dark:border-gray-700 shrink-0">
-        <h1 className="text-base font-bold text-gray-900 dark:text-white mr-1 hidden sm:block">
-          Agendamentos
-        </h1>
+      <div className="border-b border-gray-200 dark:border-gray-700 shrink-0">
+        {/* Row 1: navigation + agendar */}
+        <div className="flex items-center gap-2 px-4 sm:px-5 py-2.5">
+          <h1 className="text-base font-bold text-gray-900 dark:text-white mr-1 hidden sm:block">
+            Agendamentos
+          </h1>
 
-        <button
-          onClick={prevPeriod}
-          className="p-1.5 rounded-lg hover:bg-gray-100 dark:hover:bg-gray-700 text-gray-500 transition-colors"
-        >
-          <ChevronLeft size={16} />
-        </button>
-        <span className="text-sm font-medium text-gray-700 dark:text-gray-300 min-w-45 text-center select-none capitalize">
-          {rangeLabel}
-        </span>
-        <button
-          onClick={nextPeriod}
-          className="p-1.5 rounded-lg hover:bg-gray-100 dark:hover:bg-gray-700 text-gray-500 transition-colors"
-        >
-          <ChevronRight size={16} />
-        </button>
-        <button
-          onClick={goToday}
-          className="text-xs font-medium text-slate-600 dark:text-slate-400 border border-gray-300 dark:border-gray-600 rounded-lg px-2.5 py-1.5 hover:bg-gray-50 dark:hover:bg-gray-800 transition-colors"
-        >
-          Hoje
-        </button>
-
-        <div className="flex-1" />
-
-        {loading && (
-          <span className="text-xs text-gray-400 dark:text-gray-500 hidden sm:block">
-            Carregando...
+          <button
+            onClick={prevPeriod}
+            className="p-1.5 rounded-lg hover:bg-gray-100 dark:hover:bg-gray-700 text-gray-500 transition-colors shrink-0"
+          >
+            <ChevronLeft size={16} />
+          </button>
+          <span className="text-sm font-medium text-gray-700 dark:text-gray-300 text-center select-none capitalize flex-1 sm:flex-none sm:min-w-45 truncate">
+            {rangeLabel}
           </span>
-        )}
+          <button
+            onClick={nextPeriod}
+            className="p-1.5 rounded-lg hover:bg-gray-100 dark:hover:bg-gray-700 text-gray-500 transition-colors shrink-0"
+          >
+            <ChevronRight size={16} />
+          </button>
+          <button
+            onClick={goToday}
+            className="text-xs font-medium text-slate-600 dark:text-slate-400 border border-gray-300 dark:border-gray-600 rounded-lg px-2.5 py-1.5 hover:bg-gray-50 dark:hover:bg-gray-800 transition-colors shrink-0"
+          >
+            Hoje
+          </button>
 
-        {/* View toggle */}
-        <div className="flex bg-gray-100 dark:bg-gray-800 rounded-lg p-0.5 gap-0.5">
-          {(["day", "week", "month"] as ViewMode[]).map((v) => (
-            <button
-              key={v}
-              onClick={() => setView(v)}
-              className={`px-3 py-1.5 text-xs font-semibold rounded-md transition-colors
-                ${
-                  view === v
-                    ? "bg-white dark:bg-gray-700 text-gray-900 dark:text-white shadow-sm"
-                    : "text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-300"
-                }`}
+          <div className="flex-1 hidden sm:block" />
+
+          {loading && (
+            <span className="text-xs text-gray-400 dark:text-gray-500 hidden sm:block">
+              Carregando...
+            </span>
+          )}
+
+          {/* View toggle — desktop only */}
+          <div className="hidden sm:flex bg-gray-100 dark:bg-gray-800 rounded-lg p-0.5 gap-0.5">
+            {(["day", "week", "month"] as ViewMode[]).map((v) => (
+              <button
+                key={v}
+                onClick={() => setView(v)}
+                className={`px-3 py-1.5 text-xs font-semibold rounded-md transition-colors
+                  ${
+                    view === v
+                      ? "bg-white dark:bg-gray-700 text-gray-900 dark:text-white shadow-sm"
+                      : "text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-300"
+                  }`}
+              >
+                {v === "day" ? "Dia" : v === "week" ? "Semana" : "Mês"}
+              </button>
+            ))}
+          </div>
+
+          {/* Professional filter — desktop only */}
+          {isAdmin && professionals.length > 0 && (
+            <select
+              value={filterProfId ?? ""}
+              onChange={(e) =>
+                setFilterProfId(e.target.value ? Number(e.target.value) : null)
+              }
+              className="hidden sm:block border border-gray-300 dark:border-gray-600 rounded-lg px-3 py-1.5 text-sm bg-white dark:bg-gray-800 text-gray-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-slate-500"
             >
-              {v === "day" ? "Dia" : v === "week" ? "Semana" : "Mês"}
-            </button>
-          ))}
+              <option value="">Todos</option>
+              {professionals.map((p) => (
+                <option key={p.id} value={p.id}>
+                  {p.name}
+                </option>
+              ))}
+            </select>
+          )}
+
+          <button
+            onClick={tryOpenDefaultAgendar}
+            className="flex items-center gap-1.5 bg-slate-900 dark:bg-slate-700 text-white rounded-lg px-3 py-1.5 sm:px-4 sm:py-2 text-sm font-medium hover:bg-slate-800 dark:hover:bg-slate-600 transition-colors shrink-0"
+          >
+            <Plus size={15} />
+            <span className="hidden sm:inline">Agendar</span>
+          </button>
         </div>
 
-        {isAdmin && professionals.length > 0 && (
-          <select
-            value={filterProfId ?? ""}
-            onChange={(e) =>
-              setFilterProfId(e.target.value ? Number(e.target.value) : null)
-            }
-            className="border border-gray-300 dark:border-gray-600 rounded-lg px-3 py-1.5 text-sm bg-white dark:bg-gray-800 text-gray-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-slate-500"
-          >
-            <option value="">Todos</option>
-            {professionals.map((p) => (
-              <option key={p.id} value={p.id}>
-                {p.name}
-              </option>
+        {/* Row 2: view toggle + professional filter — mobile only */}
+        <div className="flex items-center gap-2 px-4 pb-2 sm:hidden">
+          <div className="flex bg-gray-100 dark:bg-gray-800 rounded-lg p-0.5 gap-0.5 flex-1">
+            {(["day", "week", "month"] as ViewMode[]).map((v) => (
+              <button
+                key={v}
+                onClick={() => setView(v)}
+                className={`flex-1 py-2 text-xs font-semibold rounded-md transition-colors
+                  ${
+                    view === v
+                      ? "bg-white dark:bg-gray-700 text-gray-900 dark:text-white shadow-sm"
+                      : "text-gray-500 dark:text-gray-400"
+                  }`}
+              >
+                {v === "day" ? "Dia" : v === "week" ? "Semana" : "Mês"}
+              </button>
             ))}
-          </select>
-        )}
-
-        <button
-          onClick={tryOpenDefaultAgendar}
-          className="flex items-center gap-1.5 bg-slate-900 dark:bg-slate-700 text-white rounded-lg px-4 py-2 text-sm font-medium hover:bg-slate-800 dark:hover:bg-slate-600 transition-colors"
-        >
-          <Plus size={15} />
-          <span className="hidden sm:inline">Agendar</span>
-        </button>
+          </div>
+          {isAdmin && professionals.length > 0 && (
+            <select
+              value={filterProfId ?? ""}
+              onChange={(e) =>
+                setFilterProfId(e.target.value ? Number(e.target.value) : null)
+              }
+              className="border border-gray-300 dark:border-gray-600 rounded-lg px-2.5 py-1.5 text-sm bg-white dark:bg-gray-800 text-gray-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-slate-500 max-w-36"
+            >
+              <option value="">Todos</option>
+              {professionals.map((p) => (
+                <option key={p.id} value={p.id}>
+                  {p.name}
+                </option>
+              ))}
+            </select>
+          )}
+        </div>
       </div>
 
       {/* ── Month view ── */}
