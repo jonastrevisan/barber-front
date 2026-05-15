@@ -304,6 +304,8 @@ function CreateModal({
   const [loadingSlots, setLoadingSlots] = useState(false);
   const [slotsError, setSlotsError] = useState(false);
   const [slotRetry, setSlotRetry] = useState(0);
+  const [submitAlert, setSubmitAlert] = useState<string | null>(null);
+  const [saving, setSaving] = useState(false);
 
   const professionalOptions = useMemo(
     () => professionals.map((p) => ({ id: p.id, label: p.name })),
@@ -381,18 +383,14 @@ function CreateModal({
 
   async function submit(e: React.FormEvent) {
     e.preventDefault();
+    setSubmitAlert(null);
     if (!svcId || !clientId || !profId)
-      return toast.error("Preencha todos os campos");
+      return setSubmitAlert("Preencha todos os campos obrigatórios.");
     if (slotsError)
-      return toast.error(
-        "Não foi possível confirmar disponibilidade. Toque em Tentar novamente ou mude a data.",
-      );
+      return setSubmitAlert("Não foi possível confirmar disponibilidade. Tente novamente ou mude a data.");
     if (!slotValid)
-      return toast.error(
-        "Horário indisponível: fora do expediente, em dia bloqueado ou já ocupado para este serviço.",
-      );
-    onClose();
-    const tid = toast.loading("Criando agendamento...");
+      return setSubmitAlert("Este horário já está ocupado ou fora do expediente. Escolha outro horário.");
+    setSaving(true);
     appointmentsApi.create({
       professional_id: profId,
       service_id: svcId,
@@ -401,8 +399,19 @@ function CreateModal({
       notes: notes || undefined,
       client_id: clientId,
     })
-      .then(() => { toast.success("Agendamento criado", { id: tid }); onCreated(); })
-      .catch((err: any) => { toast.error(err?.response?.data?.message ?? "Erro ao criar", { id: tid }); onCreated(); });
+      .then(() => { toast.success("Agendamento criado"); onCreated(); onClose(); })
+      .catch((err: any) => {
+        const msg: string = err?.response?.data?.message ?? "Erro ao criar agendamento";
+        const isConflict = err?.response?.status === 409 || msg.toLowerCase().includes("ocupado") || msg.toLowerCase().includes("conflict") || msg.toLowerCase().includes("disponível");
+        if (isConflict) {
+          setSubmitAlert("Este horário já está ocupado. Escolha outro horário.");
+        } else {
+          onClose();
+          toast.error(msg);
+        }
+        onCreated();
+      })
+      .finally(() => setSaving(false));
   }
 
   return (
@@ -446,7 +455,7 @@ function CreateModal({
               <input
                 type="date"
                 value={d}
-                onChange={(e) => setD(e.target.value)}
+                onChange={(e) => { setD(e.target.value); setSubmitAlert(null); }}
                 required
                 className={INPUT}
               />
@@ -463,7 +472,7 @@ function CreateModal({
                 list="create-appt-slot-datalist"
                 step={60}
                 value={t}
-                onChange={(e) => setT(e.target.value)}
+                onChange={(e) => { setT(e.target.value); setSubmitAlert(null); }}
                 required
                 className={INPUT}
               />
@@ -543,18 +552,23 @@ function CreateModal({
               className={`${INPUT} resize-none`}
             />
           </div>
+          {submitAlert && (
+            <div className="flex items-start gap-2.5 rounded-xl border border-red-200 dark:border-red-800 bg-red-50 dark:bg-red-900/20 px-3.5 py-3">
+              <AlertTriangle size={15} className="text-red-500 shrink-0 mt-0.5" />
+              <p className="text-sm text-red-600 dark:text-red-400 leading-snug">{submitAlert}</p>
+            </div>
+          )}
           <button
             type="submit"
             disabled={
+              saving ||
               (selfRole !== "client" && clients.length === 0) ||
               services.length === 0 ||
-              loadingSlots ||
-              slotsError ||
-              !slotValid
+              loadingSlots
             }
             className="w-full bg-slate-900 dark:bg-slate-700 text-white rounded-xl py-2.5 text-sm font-semibold hover:bg-slate-800 dark:hover:bg-slate-600 transition-colors disabled:opacity-60"
           >
-            Criar agendamento
+            {saving ? "Criando..." : "Criar agendamento"}
           </button>
           <button
             type="button"
@@ -1881,7 +1895,10 @@ export default function AgendamentosPage() {
                       return (
                         <div
                           key={`a-${item.appt.id}`}
-                          className={`text-[11px] truncate px-1.5 py-0.5 rounded mb-0.5 cursor-pointer ${c.bg} ${c.text} ${item.appt.status === "cancelled" ? "opacity-50 line-through" : ""}`}
+                          className={`text-[11px] truncate px-1.5 py-0.5 rounded mb-0.5 cursor-pointer
+                            ${item.appt.status === "cancelled"
+                              ? "bg-gray-200 dark:bg-gray-700 text-gray-400 dark:text-gray-500 line-through"
+                              : `${c.bg} ${c.text}`}`}
                           onClick={(e) => { e.stopPropagation(); setDetailAppt(item.appt); }}
                         >
                           {item.appt.start_time.slice(0, 5)}{" "}
@@ -2120,15 +2137,16 @@ export default function AgendamentosPage() {
                             width: `calc(${width * 100}% - 4px)`,
                           }}
                           className={`absolute z-10 overflow-hidden rounded-md border-l-[3px] px-1.5 py-1 cursor-pointer select-none transition-opacity hover:opacity-80
-                            ${color.bg} ${color.border} ${color.text}
-                            ${appt.status === "cancelled" ? "opacity-40" : ""}`}
+                            ${appt.status === "cancelled"
+                              ? "bg-gray-100 dark:bg-gray-700/50 border-l-gray-400 dark:border-l-gray-500 text-gray-400 dark:text-gray-500"
+                              : `${color.bg} ${color.border} ${color.text}`}`}
                           onClick={(e) => {
                             e.stopPropagation();
                             setDetailAppt(appt);
                           }}
                         >
                           {compact ? (
-                            <p className="text-[11px] font-semibold leading-tight truncate">
+                            <p className={`text-[11px] font-semibold leading-tight truncate ${appt.status === "cancelled" ? "line-through" : ""}`}>
                               {appt.start_time.slice(0, 5)} ·{" "}
                               {appt.client?.name ?? appt.service.name}
                             </p>
@@ -2138,7 +2156,7 @@ export default function AgendamentosPage() {
                                 {appt.start_time.slice(0, 5)} –{" "}
                                 {appt.end_time.slice(0, 5)}
                               </p>
-                              <p className="text-[12px] font-bold leading-tight mt-0.5 truncate">
+                              <p className={`text-[12px] font-bold leading-tight mt-0.5 truncate ${appt.status === "cancelled" ? "line-through" : ""}`}>
                                 {appt.client?.name ?? appt.professional?.name}
                               </p>
                               <p className="text-[11px] leading-tight opacity-75 truncate">
