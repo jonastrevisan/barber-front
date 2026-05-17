@@ -152,7 +152,7 @@ function UpcomingCard({ appt }: { appt: Stats['upcoming'][number] }) {
 }
 
 export default function DashboardPage() {
-  const { isAdmin, isProfessional } = useAuth();
+  const { isAdmin, isProfessional, isLoading: authLoading } = useAuth();
   const [stats, setStats] = useState<Stats | null>(null);
   const [invoices, setInvoices] = useState<Invoice[]>([]);
   const [loading, setLoading] = useState(true);
@@ -168,18 +168,20 @@ export default function DashboardPage() {
 
   useEffect(() => {
     setLoading(true);
-    const fetchStats = appointmentsApi.stats({ from, to, professional_id: filterProfId });
-    const fetchInvoices = (isAdmin || isProfessional)
-      ? invoicesApi.list({ from, to })
-      : Promise.resolve(null);
-    Promise.all([fetchStats, fetchInvoices])
-      .then(([sRes, iRes]) => {
-        setStats(sRes.data);
-        setInvoices(iRes?.data ?? []);
-      })
+    appointmentsApi
+      .stats({ from, to, professional_id: filterProfId })
+      .then((r) => setStats(r.data))
       .catch(() => toast.error('Erro ao carregar dashboard'))
       .finally(() => setLoading(false));
-  }, [from, to, filterProfId, isAdmin, isProfessional]);
+  }, [from, to, filterProfId]);
+
+  useEffect(() => {
+    if (authLoading || (!isAdmin && !isProfessional)) return;
+    invoicesApi
+      .list({ from, to })
+      .then((r) => setInvoices(r.data))
+      .catch(() => toast.error('Erro ao carregar comandas'));
+  }, [from, to, isAdmin, isProfessional, authLoading]);
 
   const cancellationRate = stats
     ? stats.total_appointments > 0
@@ -311,38 +313,46 @@ export default function DashboardPage() {
           </div>
 
           {/* Payment methods breakdown */}
-          {(isAdmin || isProfessional) && paymentBreakdown.length > 0 && (
+          {(isAdmin || isProfessional) && (
             <div className="bg-white dark:bg-gray-800 rounded-2xl border border-gray-200 dark:border-gray-700 p-5">
               <div className="flex items-center gap-2 mb-4">
                 <CreditCard size={16} className="text-gray-400" />
                 <h2 className="text-sm font-semibold text-gray-700 dark:text-gray-300">Formas de pagamento</h2>
-                <span className="ml-auto text-xs text-gray-400 dark:text-gray-500">
-                  {formatCurrency(paymentBreakdown.reduce((s, p) => s + p.amount, 0))} recebido
-                </span>
+                {paymentBreakdown.length > 0 && (
+                  <span className="ml-auto text-xs text-gray-400 dark:text-gray-500">
+                    {formatCurrency(paymentBreakdown.reduce((s, p) => s + p.amount, 0))} recebido
+                  </span>
+                )}
               </div>
-              <div className="space-y-3">
-                {paymentBreakdown.map(({ method, amount, pct }) => (
-                  <div key={method}>
-                    <div className="flex items-center justify-between mb-1">
-                      <span className="text-sm text-gray-700 dark:text-gray-300">
-                        {PAYMENT_LABELS[method] ?? method}
-                      </span>
-                      <div className="flex items-center gap-2">
-                        <span className="text-xs text-gray-400 dark:text-gray-500">{pct}%</span>
-                        <span className="text-sm font-semibold text-gray-900 dark:text-white w-28 text-right">
-                          {formatCurrency(amount)}
+              {paymentBreakdown.length === 0 ? (
+                <p className="text-sm text-gray-400 dark:text-gray-500 text-center py-4">
+                  Nenhum pagamento registrado no período
+                </p>
+              ) : (
+                <div className="space-y-3">
+                  {paymentBreakdown.map(({ method, amount, pct }) => (
+                    <div key={method}>
+                      <div className="flex items-center justify-between mb-1">
+                        <span className="text-sm text-gray-700 dark:text-gray-300">
+                          {PAYMENT_LABELS[method] ?? method}
                         </span>
+                        <div className="flex items-center gap-2">
+                          <span className="text-xs text-gray-400 dark:text-gray-500">{pct}%</span>
+                          <span className="text-sm font-semibold text-gray-900 dark:text-white w-28 text-right">
+                            {formatCurrency(amount)}
+                          </span>
+                        </div>
+                      </div>
+                      <div className="h-1.5 bg-gray-100 dark:bg-gray-700 rounded-full overflow-hidden">
+                        <div
+                          className={`h-full rounded-full ${PAYMENT_COLORS[method] ?? 'bg-slate-400'}`}
+                          style={{ width: `${pct}%` }}
+                        />
                       </div>
                     </div>
-                    <div className="h-1.5 bg-gray-100 dark:bg-gray-700 rounded-full overflow-hidden">
-                      <div
-                        className={`h-full rounded-full ${PAYMENT_COLORS[method] ?? 'bg-slate-400'}`}
-                        style={{ width: `${pct}%` }}
-                      />
-                    </div>
-                  </div>
-                ))}
-              </div>
+                  ))}
+                </div>
+              )}
             </div>
           )}
 

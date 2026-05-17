@@ -1,12 +1,12 @@
 'use client';
 
-import { useRef, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import toast from 'react-hot-toast';
 import { Camera, Sun, Moon, Check, Eye, EyeOff } from 'lucide-react';
 import { useAuth } from '@/lib/auth/AuthContext';
 import { useTheme } from '@/lib/theme/ThemeContext';
 import { usersApi } from '@/lib/api/users';
-import { avatarSrc } from '@/lib/utils';
+import { avatarSrc, maskBrazilPhoneInput } from '@/lib/utils';
 
 const inputClass =
   'w-full border border-gray-300 dark:border-gray-600 rounded-lg px-3 py-2.5 text-sm bg-white dark:bg-gray-700 text-gray-900 dark:text-white placeholder-gray-400 dark:placeholder-gray-500 focus:outline-none focus:ring-2 focus:ring-slate-500 transition-colors';
@@ -23,6 +23,12 @@ export default function PerfilPage() {
 
   const [name, setName] = useState(user?.name ?? '');
   const [phone, setPhone] = useState('');
+
+  useEffect(() => {
+    usersApi.me().then((r) => {
+      if (r.data.phone) setPhone(maskBrazilPhoneInput(r.data.phone));
+    }).catch(() => {});
+  }, []);
   const [avatar, setAvatar] = useState<string | null>(user?.avatar ?? null);
   const [savingProfile, setSavingProfile] = useState(false);
 
@@ -168,8 +174,10 @@ export default function PerfilPage() {
           <div>
             <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Telefone</label>
             <input
+              type="tel"
+              inputMode="numeric"
               value={phone}
-              onChange={(e) => setPhone(e.target.value)}
+              onChange={(e) => setPhone(maskBrazilPhoneInput(e.target.value))}
               placeholder="(00) 00000-0000"
               className={inputClass}
             />
