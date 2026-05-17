@@ -19,6 +19,7 @@ import {
   UserCircle,
   LayoutDashboard,
   Building2,
+  Settings,
 } from "lucide-react";
 
 interface NavItem {
@@ -143,7 +144,7 @@ export default function DashboardLayout({
     { href: "/dashboard", label: "Dashboard", icon: LayoutDashboard },
     { href: "/agendamentos", label: "Agendamentos", icon: Calendar },
     { href: "/perfil", label: "Perfil", icon: UserCircle },
-    ...(isProfessional
+    ...(isProfessional || isAdmin
       ? [
           {
             href: "/disponibilidade",
@@ -156,6 +157,7 @@ export default function DashboardLayout({
       ? [
           { href: "/admin/servicos", label: "Serviços", icon: Scissors },
           { href: "/admin/usuarios", label: "Usuários", icon: Users },
+          { href: "/configuracoes", label: "Configurações", icon: Settings },
         ]
       : []),
     ...(isSuperAdmin

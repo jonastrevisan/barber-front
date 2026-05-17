@@ -1,21 +1,62 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import toast from 'react-hot-toast';
 import { Plus, Pencil, Trash2, X, Check, ToggleLeft, ToggleRight } from 'lucide-react';
 import { servicesApi, Service } from '@/lib/api/services';
+
+function ServiceColorPicker({ value, onChange }: { value: string; onChange(v: string): void }) {
+  const inputRef = useRef<HTMLInputElement>(null);
+  return (
+    <div className="flex items-center gap-3">
+      <button
+        type="button"
+        onClick={() => inputRef.current?.click()}
+        className="w-9 h-9 rounded-lg border-2 border-gray-300 dark:border-gray-600 overflow-hidden shrink-0 hover:border-gray-400 transition-colors"
+        style={value ? { backgroundColor: value, borderColor: value } : {}}
+        title="Escolher cor"
+      >
+        {!value && <span className="text-gray-300 text-xl leading-none flex items-center justify-center h-full">+</span>}
+      </button>
+      <input
+        ref={inputRef}
+        type="color"
+        value={value || '#6366f1'}
+        onChange={(e) => onChange(e.target.value)}
+        className="sr-only"
+      />
+      {value ? (
+        <div className="flex items-center gap-2">
+          <span className="text-sm text-gray-700 dark:text-gray-300 font-mono">{value}</span>
+          <button
+            type="button"
+            onClick={() => onChange('')}
+            className="text-gray-400 hover:text-red-500 transition-colors"
+            title="Remover cor"
+          >
+            <X size={14} />
+          </button>
+        </div>
+      ) : (
+        <span className="text-sm text-gray-400">Clique no quadrado para escolher</span>
+      )}
+    </div>
+  );
+}
 
 interface ServiceForm {
   name: string;
   description: string;
   durationMinutes: number;
   price: number;
+  color: string;
 }
 
-const empty: ServiceForm = { name: '', description: '', durationMinutes: 30, price: 0 };
+const DEFAULT_COLOR = '#6366f1';
+const empty: ServiceForm = { name: '', description: '', durationMinutes: 30, price: 0, color: DEFAULT_COLOR };
 
 function toApiPayload(form: ServiceForm) {
-  return { name: form.name, description: form.description, duration_minutes: form.durationMinutes, price: form.price };
+  return { name: form.name, description: form.description, duration_minutes: form.durationMinutes, price: form.price, color: form.color || undefined };
 }
 
 const inputClass = 'w-full border border-gray-300 dark:border-gray-600 rounded-lg px-3 py-2 text-sm bg-white dark:bg-gray-700 text-gray-900 dark:text-white placeholder-gray-400 dark:placeholder-gray-500 focus:outline-none focus:ring-2 focus:ring-slate-500';
@@ -56,7 +97,7 @@ export default function ServicosAdminPage() {
   const openEdit = (s: Service) => {
     setEditing(s);
     const price = Number(s.price);
-    setForm({ name: s.name, description: s.description || '', durationMinutes: s.duration_minutes, price });
+    setForm({ name: s.name, description: s.description || '', durationMinutes: s.duration_minutes, price, color: s.color || DEFAULT_COLOR });
     setPriceDisplay(formatBRL(Math.round(price * 100)));
     setShowForm(true);
   };
@@ -188,6 +229,11 @@ export default function ServicosAdminPage() {
                   </div>
                 </div>
               </div>
+
+              <div>
+                <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">Cor no calendário</label>
+                <ServiceColorPicker value={form.color} onChange={(v) => setForm((f) => ({ ...f, color: v }))} />
+              </div>
             </div>
 
             <div className="flex gap-3 mt-6">
@@ -238,6 +284,9 @@ export default function ServicosAdminPage() {
                   <tr key={s.id} className={`transition-colors ${s.is_active ? 'hover:bg-gray-50 dark:hover:bg-gray-700' : 'opacity-50 bg-gray-50 dark:bg-gray-900/50'}`}>
                     <td className="px-6 py-4">
                       <div className="flex items-center gap-2">
+                        {s.color && (
+                          <span className="w-3 h-3 rounded-full shrink-0" style={{ backgroundColor: s.color }} />
+                        )}
                         <span className="font-medium text-gray-900 dark:text-white">{s.name}</span>
                         {!s.is_active && (
                           <span className="text-xs bg-gray-200 dark:bg-gray-700 text-gray-500 dark:text-gray-400 px-1.5 py-0.5 rounded">Inativo</span>

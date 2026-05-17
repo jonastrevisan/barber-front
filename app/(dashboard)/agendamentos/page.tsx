@@ -14,13 +14,27 @@ import {
   Calendar,
   RefreshCw,
   AlertTriangle,
+  FileText,
 } from "lucide-react";
 import { appointmentsApi, Appointment, ScheduleBlock } from "@/lib/api/appointments";
 import { schedulesApi, type Schedule } from "@/lib/api/schedules";
 import { usersApi, User as ApiUser } from "@/lib/api/users";
 import { servicesApi, Service } from "@/lib/api/services";
+import { messageTemplatesApi } from "@/lib/api/message-templates";
+import { tenantsApi } from "@/lib/api/tenants";
+import { invoicesApi } from "@/lib/api/invoices";
 import { useAuth } from "@/lib/auth/AuthContext";
 import { SearchableSelect } from "@/components/SearchableSelect";
+
+/* ── Payment method labels (shared with configurações) ───── */
+const PAYMENT_LABELS: Record<string, { label: string; emoji: string }> = {
+  pix:           { label: "Pix",                    emoji: "⚡" },
+  dinheiro:      { label: "Dinheiro",                emoji: "💵" },
+  credito:       { label: "Cartão de Crédito",       emoji: "💳" },
+  debito:        { label: "Cartão de Débito",         emoji: "💳" },
+  transferencia: { label: "Transferência Bancária",   emoji: "🏦" },
+  voucher:       { label: "Voucher / Vale",            emoji: "🎟️" },
+};
 
 /* ── Grid constants ─────────────────────────────────────── */
 const START_HOUR = 7;
@@ -64,46 +78,26 @@ const MONTH_SHORT = [
 ];
 
 /* ── Color palette ──────────────────────────────────────── */
-const PALETTE = [
-  {
-    bg: "bg-orange-100 dark:bg-orange-900/40",
-    border: "border-orange-400",
-    text: "text-orange-900 dark:text-orange-100",
-  },
-  {
-    bg: "bg-blue-100 dark:bg-blue-900/40",
-    border: "border-blue-400",
-    text: "text-blue-900 dark:text-blue-100",
-  },
-  {
-    bg: "bg-violet-100 dark:bg-violet-900/40",
-    border: "border-violet-400",
-    text: "text-violet-900 dark:text-violet-100",
-  },
-  {
-    bg: "bg-pink-100 dark:bg-pink-900/40",
-    border: "border-pink-400",
-    text: "text-pink-900 dark:text-pink-100",
-  },
-  {
-    bg: "bg-teal-100 dark:bg-teal-900/40",
-    border: "border-teal-400",
-    text: "text-teal-900 dark:text-teal-100",
-  },
-  {
-    bg: "bg-amber-100 dark:bg-amber-900/40",
-    border: "border-amber-400",
-    text: "text-amber-900 dark:text-amber-100",
-  },
-  {
-    bg: "bg-rose-100 dark:bg-rose-900/40",
-    border: "border-rose-400",
-    text: "text-rose-900 dark:text-rose-100",
-  },
-] as const;
+const FALLBACK_COLORS = ["#f97316","#3b82f6","#8b5cf6","#ec4899","#14b8a6","#f59e0b","#f43f5e","#22c55e","#0ea5e9","#ef4444"];
 
-function svcColor(id: number) {
-  return PALETTE[id % PALETTE.length];
+type SvcColorResult = { bg: string; border: string; text: string; style: React.CSSProperties };
+
+function svcColor(id: number, color?: string): SvcColorResult {
+  if (color && color.startsWith('#')) {
+    return {
+      bg: '',
+      border: '',
+      text: '',
+      style: { backgroundColor: color + '20', borderColor: color },
+    };
+  }
+  const hex = FALLBACK_COLORS[id % FALLBACK_COLORS.length];
+  return {
+    bg: '',
+    border: '',
+    text: '',
+    style: { backgroundColor: hex + '20', borderColor: hex },
+  };
 }
 
 /* ── Date helpers ───────────────────────────────────────── */
@@ -306,6 +300,43 @@ function CreateModal({
   const [slotRetry, setSlotRetry] = useState(0);
   const [submitAlert, setSubmitAlert] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
+  const [repeatConflictDates, setRepeatConflictDates] = useState<string[] | null>(null);
+  const [checkingRepeatConflicts, setCheckingRepeatConflicts] = useState(false);
+
+  /* repeat */
+  const [repeat, setRepeat] = useState(false);
+  const [repeatEvery, setRepeatEvery] = useState(7);
+  const [repeatUnit, setRepeatUnit] = useState<"day" | "week">("day");
+  const maxRepeatUntil = useMemo(() => {
+    if (!d) return "";
+    const base = new Date(d + "T12:00:00");
+    base.setFullYear(base.getFullYear() + 1);
+    return base.toISOString().split("T")[0];
+  }, [d]);
+  const [repeatUntil, setRepeatUntil] = useState(maxRepeatUntil);
+  useEffect(() => {
+    if (!maxRepeatUntil) return;
+    if (!repeatUntil || repeatUntil > maxRepeatUntil) setRepeatUntil(maxRepeatUntil);
+  }, [maxRepeatUntil]);
+  const repeatDates = useMemo(() => {
+    if (!repeat || !d || !repeatUntil) return [];
+    const stepDays = repeatUnit === "week" ? repeatEvery * 7 : repeatEvery;
+    const dates: string[] = [];
+    const until = new Date(repeatUntil + "T12:00:00");
+    let cur = new Date(d + "T12:00:00");
+    cur.setDate(cur.getDate() + stepDays);
+    while (cur <= until) {
+      dates.push(cur.toISOString().split("T")[0]);
+      cur.setDate(cur.getDate() + stepDays);
+    }
+    return dates;
+  }, [repeat, d, repeatEvery, repeatUnit, repeatUntil]);
+  const nextRepeatDate = repeatDates[0];
+  const nextRepeatFmt = nextRepeatDate
+    ? new Date(nextRepeatDate + "T12:00:00").toLocaleDateString("pt-BR", {
+        weekday: "short", day: "2-digit", month: "2-digit", year: "numeric",
+      })
+    : null;
 
   const professionalOptions = useMemo(
     () => professionals.map((p) => ({ id: p.id, label: p.name })),
@@ -389,22 +420,82 @@ function CreateModal({
     if (slotsError)
       return setSubmitAlert("Não foi possível confirmar disponibilidade. Tente novamente ou mude a data.");
     if (!slotValid)
-      return setSubmitAlert("Este horário já está ocupado ou fora do expediente. Escolha outro horário.");
+      return setSubmitAlert("O profissional não está disponível neste horário, altere o horário ou o profissional.");
+
+    /* check conflicts for repeat dates (skip check if user already acknowledged) */
+    if (repeat && repeatDates.length > 0 && repeatConflictDates === null) {
+      setCheckingRepeatConflicts(true);
+      try {
+        const from = repeatDates[0];
+        const to = repeatDates[repeatDates.length - 1];
+        const svc = services.find((s) => s.id === svcId);
+        const duration = svc?.duration_minutes ?? 60;
+        const startMin = pickedMin!;
+        const endMin = startMin + duration;
+        const res = await appointmentsApi.list({ from, to });
+        const conflicts = repeatDates.filter((date) =>
+          res.data.some(
+            (a) =>
+              a.date === date &&
+              a.status !== "cancelled" &&
+              a.professional?.id === profId &&
+              startMin < timeToMin(a.end_time) &&
+              endMin > timeToMin(a.start_time),
+          ),
+        );
+        if (conflicts.length > 0) {
+          setRepeatConflictDates(conflicts);
+          setCheckingRepeatConflicts(false);
+          return;
+        }
+      } catch {
+        /* on fetch error proceed */
+      }
+      setCheckingRepeatConflicts(false);
+      setRepeatConflictDates([]);
+    }
+
     setSaving(true);
-    appointmentsApi.create({
-      professional_id: profId,
-      service_id: svcId,
-      date: d,
-      start_time: coerceApiStartTime(matchedSlot, pickedMin!),
-      notes: notes || undefined,
-      client_id: clientId,
-    })
-      .then(() => { toast.success("Agendamento criado"); onCreated(); onClose(); })
+    const startTime = coerceApiStartTime(matchedSlot, pickedMin!);
+    const allDates = [d, ...repeatDates];
+
+    const req = allDates.length === 1
+      ? appointmentsApi.create({
+          professional_id: profId,
+          service_id: svcId,
+          date: d,
+          start_time: startTime,
+          notes: notes || undefined,
+          client_id: clientId,
+        }).then((r) => ({ created: [r.data], skipped: [] as string[], adjusted: [] as { from: string; to: string }[] }))
+      : appointmentsApi.createBatch({
+          professional_id: profId,
+          service_id: svcId,
+          dates: allDates,
+          start_time: startTime,
+          notes: notes || undefined,
+          client_id: clientId,
+        }).then((r) => r.data);
+
+    req
+      .then(({ created, skipped, adjusted }) => {
+        if (created.length === 0) {
+          setSubmitAlert("Nenhum agendamento criado — todos os horários estão ocupados.");
+          return;
+        }
+        onClose();
+        const parts: string[] = [];
+        parts.push(created.length > 1 ? `${created.length} agendamentos criados` : "Agendamento criado");
+        if (skipped.length > 0) parts.push(`${skipped.length} data(s) pulada(s) por conflito`);
+        if (adjusted && adjusted.length > 0) parts.push(`${adjusted.length} data(s) movida(s) para o próximo dia disponível`);
+        toast.success(parts.join(". ") + ".");
+        onCreated();
+      })
       .catch((err: any) => {
         const msg: string = err?.response?.data?.message ?? "Erro ao criar agendamento";
-        const isConflict = err?.response?.status === 409 || msg.toLowerCase().includes("ocupado") || msg.toLowerCase().includes("conflict") || msg.toLowerCase().includes("disponível");
+        const isConflict = err?.response?.status === 409 || msg.toLowerCase().includes("ocupado") || msg.toLowerCase().includes("conflict");
         if (isConflict) {
-          setSubmitAlert("Este horário já está ocupado. Escolha outro horário.");
+          setSubmitAlert("O profissional não está disponível neste horário, altere o horário ou o profissional.");
         } else {
           onClose();
           toast.error(msg);
@@ -455,7 +546,7 @@ function CreateModal({
               <input
                 type="date"
                 value={d}
-                onChange={(e) => { setD(e.target.value); setSubmitAlert(null); }}
+                onChange={(e) => { setD(e.target.value); setSubmitAlert(null); setRepeatConflictDates(null); }}
                 required
                 className={INPUT}
               />
@@ -472,7 +563,7 @@ function CreateModal({
                 list="create-appt-slot-datalist"
                 step={60}
                 value={t}
-                onChange={(e) => { setT(e.target.value); setSubmitAlert(null); }}
+                onChange={(e) => { setT(e.target.value); setSubmitAlert(null); setRepeatConflictDates(null); }}
                 required
                 className={INPUT}
               />
@@ -552,6 +643,110 @@ function CreateModal({
               className={`${INPUT} resize-none`}
             />
           </div>
+          {/* Repeat toggle */}
+          <div className="border border-gray-200 dark:border-gray-700 rounded-xl overflow-hidden">
+            <button
+              type="button"
+              onClick={() => setRepeat((v) => !v)}
+              className="w-full flex items-center justify-between px-3.5 py-2.5 hover:bg-gray-50 dark:hover:bg-gray-700/50 transition-colors"
+            >
+              <span className="flex items-center gap-2 text-sm font-medium text-rose-500 dark:text-rose-400">
+                <RefreshCw size={14} />
+                Repetir agendamento
+              </span>
+              <div className={`w-9 h-5 rounded-full transition-colors ${repeat ? "bg-rose-500" : "bg-gray-300 dark:bg-gray-600"}`}>
+                <div className={`w-4 h-4 bg-white rounded-full shadow mt-0.5 transition-transform ${repeat ? "translate-x-4" : "translate-x-0.5"}`} />
+              </div>
+            </button>
+            {repeat && (
+              <div className="px-3.5 pb-3.5 pt-1 space-y-2.5 border-t border-gray-100 dark:border-gray-700">
+                <div className="flex items-center gap-2">
+                  <span className="text-xs text-gray-500 dark:text-gray-400 shrink-0">Repetir a cada:</span>
+                  <input
+                    type="number"
+                    min={1}
+                    max={365}
+                    value={repeatEvery}
+                    onChange={(e) => setRepeatEvery(Math.max(1, Number(e.target.value)))}
+                    className="w-14 text-center rounded-lg border border-gray-200 dark:border-gray-600 bg-white dark:bg-gray-700 text-sm text-gray-900 dark:text-white py-1 px-1"
+                  />
+                  <select
+                    value={repeatUnit}
+                    onChange={(e) => setRepeatUnit(e.target.value as "day" | "week")}
+                    className="rounded-lg border border-gray-200 dark:border-gray-600 bg-white dark:bg-gray-700 text-sm text-gray-900 dark:text-white py-1 px-2"
+                  >
+                    <option value="day">Dia(s)</option>
+                    <option value="week">Semana(s)</option>
+                  </select>
+                </div>
+                {nextRepeatFmt && (
+                  <p className="text-xs text-gray-500 dark:text-gray-400">
+                    Próxima repetição: <span className="font-medium">{nextRepeatFmt}</span>
+                  </p>
+                )}
+                <div>
+                  <label className="text-xs text-gray-500 dark:text-gray-400 block mb-1">Repetir até a data:</label>
+                  <input
+                    type="date"
+                    value={repeatUntil}
+                    min={d}
+                    max={maxRepeatUntil}
+                    onChange={(e) => setRepeatUntil(e.target.value)}
+                    required={repeat}
+                    className={INPUT}
+                  />
+                </div>
+                {repeatDates.length > 0 && (
+                  <p className="text-xs text-rose-500 dark:text-rose-400 font-medium">
+                    {repeatDates.length + 1} agendamentos serão criados
+                  </p>
+                )}
+              </div>
+            )}
+          </div>
+
+          {checkingRepeatConflicts && (
+            <p className="text-xs text-center text-gray-400 py-1">Verificando disponibilidade nas datas repetidas...</p>
+          )}
+
+          {repeatConflictDates !== null && repeatConflictDates.length > 0 && (
+            <div className="rounded-xl border border-amber-200 dark:border-amber-700 bg-amber-50 dark:bg-amber-900/20 p-3.5 space-y-2.5">
+              <div className="flex items-start gap-2">
+                <AlertTriangle size={15} className="text-amber-500 shrink-0 mt-0.5" />
+                <div>
+                  <p className="text-xs font-medium text-amber-700 dark:text-amber-400">
+                    {repeatConflictDates.length} data(s) com conflito de horário:
+                  </p>
+                  <ul className="mt-1 space-y-0.5">
+                    {repeatConflictDates.map((date) => (
+                      <li key={date} className="text-xs text-amber-600 dark:text-amber-300">
+                        {new Date(date + "T12:00:00").toLocaleDateString("pt-BR", { weekday: "short", day: "2-digit", month: "2-digit" })}
+                      </li>
+                    ))}
+                  </ul>
+                  <p className="text-xs text-amber-600 dark:text-amber-400 mt-1.5">
+                    Essas datas serão puladas. Deseja continuar?
+                  </p>
+                </div>
+              </div>
+              <div className="flex gap-2">
+                <button
+                  type="button"
+                  onClick={() => setRepeatConflictDates(null)}
+                  className="flex-1 border border-gray-200 dark:border-gray-600 text-gray-600 dark:text-gray-400 rounded-lg py-1.5 text-xs font-medium hover:bg-gray-50 dark:hover:bg-gray-700 transition-colors"
+                >
+                  Cancelar
+                </button>
+                <button
+                  type="submit"
+                  className="flex-1 bg-slate-900 dark:bg-slate-700 text-white rounded-lg py-1.5 text-xs font-semibold hover:bg-slate-800 transition-colors"
+                >
+                  Sim, continuar
+                </button>
+              </div>
+            </div>
+          )}
+
           {submitAlert && (
             <div className="flex items-start gap-2.5 rounded-xl border border-red-200 dark:border-red-800 bg-red-50 dark:bg-red-900/20 px-3.5 py-3">
               <AlertTriangle size={15} className="text-red-500 shrink-0 mt-0.5" />
@@ -562,13 +757,15 @@ function CreateModal({
             type="submit"
             disabled={
               saving ||
+              checkingRepeatConflicts ||
+              (repeatConflictDates !== null && repeatConflictDates.length > 0) ||
               (selfRole !== "client" && clients.length === 0) ||
               services.length === 0 ||
               loadingSlots
             }
             className="w-full bg-slate-900 dark:bg-slate-700 text-white rounded-xl py-2.5 text-sm font-semibold hover:bg-slate-800 dark:hover:bg-slate-600 transition-colors disabled:opacity-60"
           >
-            {saving ? "Criando..." : "Criar agendamento"}
+            {saving ? "Criando..." : repeat && repeatDates.length > 0 ? `Criar ${repeatDates.length + 1} agendamentos` : "Criar agendamento"}
           </button>
           <button
             type="button"
@@ -1136,39 +1333,528 @@ function buildWaText(p: WaPrompt): string {
   ].join("\n");
 }
 
-function openWhatsApp(phone: string, appt: Appointment) {
+function waPhone(phone: string) {
   const digits = phone.replace(/\D/g, "");
-  const num = digits.startsWith("55") ? digits : `55${digits}`;
-  const d = new Date(appt.date + "T12:00:00");
-  const label = d.toLocaleDateString("pt-BR", {
-    weekday: "long",
-    day: "2-digit",
-    month: "long",
-  });
-  const dayPretty = waSafeClean(label.charAt(0).toUpperCase() + label.slice(1));
-  const clientName = waSafeClean(appt.client?.name);
-  const serviceName = waSafeClean(appt.service.name);
+  return digits.startsWith("55") ? digits : `55${digits}`;
+}
 
-  const msgRich = [
-    `Olá, ${clientName}! \u{1F44B}`,
+function waOpen(num: string, msg: string) {
+  const url = `https://api.whatsapp.com/send?phone=${num}&text=${encodeURIComponent(msg)}`;
+  const opened = window.open(url, "_blank");
+  if (!opened) toast.error("Não foi possível abrir o WhatsApp. Permita pop-ups para este site.");
+}
+
+async function openWhatsApp(phone: string, appt: Appointment) {
+  const num = waPhone(phone);
+  const d = new Date(appt.date + "T12:00:00");
+  const dateLabel = d.toLocaleDateString("pt-BR", { weekday: "long", day: "2-digit", month: "long" });
+  const dateFmt = waSafeClean(dateLabel.charAt(0).toUpperCase() + dateLabel.slice(1));
+
+  const replacements: Record<string, string> = {
+    "[nome-cliente]":     waSafeClean(appt.client?.name),
+    "[data-agendamento]": dateFmt,
+    "[horario]":          `${appt.start_time.slice(0, 5)} até ${appt.end_time.slice(0, 5)}`,
+    "[servicos]":         waSafeClean(appt.service.name),
+    "[profissional]":     waSafeClean(appt.professional?.name),
+    "[valor]":            `R$ ${Number(appt.service.price).toFixed(2)}`,
+  };
+
+  let template = "";
+  try {
+    const res = await messageTemplatesApi.list();
+    template = res.data.find((x) => x.type === "appointment_reminder")?.template ?? "";
+  } catch { /* use fallback */ }
+
+  const msgRich = template
+    ? Object.entries(replacements).reduce((msg, [k, v]) => msg.replaceAll(k, v), template)
+    : [
+        `Olá, ${replacements["[nome-cliente]"]}! 👋`,
+        ``,
+        `Lembrando do seu agendamento:`,
+        `📅 ${replacements["[data-agendamento]"]}`,
+        `⏰ ${replacements["[horario]"]}`,
+        `✂️ ${replacements["[servicos]"]}`,
+        `💰 ${replacements["[valor]"]}`,
+        ``,
+        `Te esperamos! 😊`,
+      ].join("\n");
+
+  waOpen(num, msgRich);
+}
+
+async function openWhatsAppAll(phone: string, appts: Appointment[]) {
+  const num = waPhone(phone);
+  const sorted = [...appts].sort((a, b) => a.start_time.localeCompare(b.start_time));
+  const first = sorted[0];
+  const clientName = waSafeClean(first.client?.name);
+  const d = new Date(first.date + "T12:00:00");
+  const dateLabel = d.toLocaleDateString("pt-BR", { weekday: "long", day: "2-digit", month: "long" });
+  const dateFmt = waSafeClean(dateLabel.charAt(0).toUpperCase() + dateLabel.slice(1));
+  const lines = sorted.map(
+    (a) => `⏰ ${a.start_time.slice(0, 5)} até ${a.end_time.slice(0, 5)} — ${waSafeClean(a.service.name)} (R$ ${Number(a.service.price).toFixed(2)})`,
+  );
+  const total = sorted.reduce((s, a) => s + Number(a.service.price), 0);
+
+  const msg = [
+    `Olá, ${clientName}! 👋`,
     ``,
-    `Lembrando do seu agendamento:`,
-    `\u{1F4C5} ${dayPretty}`,
-    `\u{23F0} ${appt.start_time.slice(0, 5)} até ${appt.end_time.slice(0, 5)}`,
-    `\u{2702}\u{FE0F} ${serviceName}`,
-    `\u{1F4B0} R$ ${Number(appt.service.price).toFixed(2)}`,
+    `Lembrando dos seus agendamentos de ${dateFmt}:`,
     ``,
-    `Te esperamos! \u{1F60A}`,
+    ...lines,
+    ``,
+    `Total: R$ ${total.toFixed(2)}`,
+    ``,
+    `Te esperamos! 😊`,
   ].join("\n");
 
-  // URL + URLSearchParams garante UTF-8 (%XX) no query — texto + emojis vão no parâmetro `text`.
-  const url = `https://api.whatsapp.com/send?phone=${num}&text=${encodeURIComponent(msgRich)}`;
-  const opened = window.open(url, "_blank");
-  if (!opened) {
-    toast.error(
-      "Não foi possível abrir o WhatsApp. Permita pop-ups para este site.",
-    );
+  waOpen(num, msg);
+}
+
+async function openWhatsAppFuture(phone: string, appts: Appointment[]) {
+  const num = waPhone(phone);
+  const sorted = [...appts].sort((a, b) => a.date.localeCompare(b.date) || a.start_time.localeCompare(b.start_time));
+  const clientName = waSafeClean(sorted[0]?.client?.name);
+  const lines = sorted.map((a) => {
+    const d = new Date(a.date + "T12:00:00");
+    const dateFmt = waSafeClean(d.toLocaleDateString("pt-BR", { weekday: "short", day: "2-digit", month: "2-digit" }));
+    return `📅 ${dateFmt} ⏰ ${a.start_time.slice(0, 5)} até ${a.end_time.slice(0, 5)} — ${waSafeClean(a.service.name)} (R$ ${Number(a.service.price).toFixed(2)})`;
+  });
+  const total = sorted.reduce((s, a) => s + Number(a.service.price), 0);
+  const msg = [
+    `Olá, ${clientName}! 👋`,
+    ``,
+    `Seus próximos agendamentos:`,
+    ``,
+    ...lines,
+    ``,
+    `Total: R$ ${total.toFixed(2)}`,
+    ``,
+    `Te esperamos! 😊`,
+  ].join("\n");
+  waOpen(num, msg);
+}
+
+/* ── Invoice modal ──────────────────────────────────────── */
+interface InvoiceModalProps {
+  appt: Appointment;
+  onClose(): void;
+}
+interface InvoiceLine {
+  appt: Appointment;
+  selected: boolean;
+  discount: number;
+}
+
+function InvoiceModal({ appt, onClose }: InvoiceModalProps) {
+  type Step = "items" | "payment" | "view";
+  const [step, setStep] = useState<Step>("items");
+  const [lines, setLines] = useState<InvoiceLine[]>([]);
+  const [loadingLines, setLoadingLines] = useState(true);
+  const [paymentMethods, setPaymentMethods] = useState<string[]>([]);
+  const [payMethod, setPayMethod] = useState("");
+  const [payAmount, setPayAmount] = useState(0);
+  const [payDate, setPayDate] = useState(isoToday());
+  const [showMethodPicker, setShowMethodPicker] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const [existingInvoice, setExistingInvoice] = useState<import("@/lib/api/invoices").Invoice | null>(null);
+  const [reopening, setReopening] = useState(false);
+
+  useEffect(() => {
+    Promise.all([
+      appointmentsApi.list({ from: appt.date, to: appt.date }),
+      tenantsApi.me(),
+      invoicesApi.list({ client_id: appt.client!.id }),
+    ])
+      .then(([apptRes, tenantRes, invRes]) => {
+        const clientAppts = apptRes.data.filter(
+          (a) => a.client?.id === appt.client?.id && a.status !== "cancelled",
+        );
+        setLines(clientAppts.map((a) => ({ appt: a, selected: true, discount: 0 })));
+        setPaymentMethods(tenantRes.data.payment_methods ?? []);
+        const found = invRes.data.find((inv) => inv.date === appt.date);
+        if (found) {
+          setExistingInvoice(found);
+          setStep("view");
+        }
+      })
+      .catch(() => {
+        setLines([{ appt, selected: true, discount: 0 }]);
+      })
+      .finally(() => setLoadingLines(false));
+  }, []);
+
+  const selected = lines.filter((l) => l.selected);
+  const subtotal = selected.reduce((s, l) => s + Number(l.appt.service.price), 0);
+  const totalDiscount = selected.reduce((s, l) => s + l.discount, 0);
+  const total = subtotal - totalDiscount;
+  const allSelected = lines.length > 0 && lines.every((l) => l.selected);
+
+  function toggleLine(id: number) {
+    setLines((prev) => prev.map((l) => (l.appt.id === id ? { ...l, selected: !l.selected } : l)));
   }
+
+  function setDiscount(id: number, val: number) {
+    setLines((prev) => prev.map((l) => (l.appt.id === id ? { ...l, discount: Math.max(0, val) } : l)));
+  }
+
+  function goToPayment() {
+    setPayAmount(Number(total.toFixed(2)));
+    setStep("payment");
+  }
+
+  async function submit() {
+    if (!payMethod) { toast.error("Selecione a forma de pagamento"); return; }
+    setSaving(true);
+    try {
+      const res = await invoicesApi.create({
+        client_id: appt.client!.id,
+        date: appt.date,
+        items: selected.map((l) => ({
+          description: l.appt.service.name,
+          quantity: 1,
+          unit_price: Number(l.appt.service.price),
+          discount: l.discount,
+          appointment_id: l.appt.id,
+          service_id: l.appt.service.id,
+        })),
+        payment: { method: payMethod, amount: payAmount, paid_at: payDate },
+      });
+      toast.success("Comanda gerada com sucesso!");
+      setExistingInvoice(res.data);
+      setStep("view");
+    } catch {
+      toast.error("Erro ao gerar comanda");
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  async function reopen() {
+    if (!existingInvoice) return;
+    setReopening(true);
+    try {
+      await invoicesApi.updateStatus(existingInvoice.id, "open");
+      setExistingInvoice(null);
+      setStep("items");
+    } catch {
+      toast.error("Erro ao reabrir comanda");
+    } finally {
+      setReopening(false);
+    }
+  }
+
+  function fmtDate(d: string) {
+    return new Date(d + "T12:00:00").toLocaleDateString("pt-BR", { day: "2-digit", month: "2-digit", year: "2-digit" });
+  }
+
+  return (
+    <div className="fixed inset-0 z-[60] flex items-end sm:items-center justify-center bg-black/40 backdrop-blur-sm p-4">
+      <div className="relative bg-white dark:bg-gray-900 rounded-2xl shadow-2xl w-full max-w-lg border border-gray-200 dark:border-gray-700 max-h-[92vh] flex flex-col">
+
+        {/* Header */}
+        <div className="flex items-center gap-3 px-5 py-4 border-b border-gray-100 dark:border-gray-700 shrink-0">
+          {step === "payment" ? (
+            <button onClick={() => setStep("items")} className="p-1 rounded-lg hover:bg-gray-100 dark:hover:bg-gray-700 transition-colors">
+              <ChevronLeft size={20} className="text-gray-500" />
+            </button>
+          ) : (
+            <div className="w-8 h-8 rounded-xl bg-rose-50 dark:bg-rose-900/30 flex items-center justify-center shrink-0">
+              <FileText size={16} className="text-rose-500" />
+            </div>
+          )}
+          <div className="flex-1 min-w-0">
+            <div className="flex items-center gap-2">
+              <p className="font-semibold text-gray-900 dark:text-white text-sm">
+                {step === "view" ? `Comanda #${existingInvoice?.id}` : step === "items" ? "Comanda" : "Pagamento"}
+              </p>
+              {step === "view" && existingInvoice && (
+                <span className={`text-[11px] font-semibold px-2 py-0.5 rounded-full ${
+                  existingInvoice.status === "closed"
+                    ? "bg-emerald-100 dark:bg-emerald-900/30 text-emerald-700 dark:text-emerald-400"
+                    : existingInvoice.status === "cancelled"
+                    ? "bg-red-100 dark:bg-red-900/30 text-red-600 dark:text-red-400"
+                    : "bg-amber-100 dark:bg-amber-900/30 text-amber-700 dark:text-amber-400"
+                }`}>
+                  {existingInvoice.status === "closed" ? "Fechada" : existingInvoice.status === "cancelled" ? "Cancelada" : "Aberta"}
+                </span>
+              )}
+            </div>
+            {step === "items" && appt.client && (
+              <p className="text-xs text-rose-500 truncate">{appt.client.name}</p>
+            )}
+            {step === "payment" && (
+              <p className="text-xs text-gray-500 dark:text-gray-400">Falta Pagar R$ {total.toFixed(2)}</p>
+            )}
+            {step === "view" && appt.client && (
+              <p className="text-xs text-gray-500 dark:text-gray-400 truncate">{appt.client.name}</p>
+            )}
+          </div>
+          {step === "items" && (
+            <button
+              onClick={goToPayment}
+              disabled={selected.length === 0}
+              className="text-xs font-bold text-gray-700 dark:text-gray-200 tracking-wide disabled:opacity-40 mr-2"
+            >
+              CONTINUAR
+            </button>
+          )}
+          <button onClick={onClose} className="p-1 rounded-lg hover:bg-gray-100 dark:hover:bg-gray-700 transition-colors">
+            <X size={18} className="text-gray-500" />
+          </button>
+        </div>
+
+        {/* Step 1: Items */}
+        {step === "items" && (
+          loadingLines ? (
+            <div className="flex-1 flex items-center justify-center">
+              <p className="text-sm text-gray-400">Carregando…</p>
+            </div>
+          ) : (
+            <>
+              {/* column headers */}
+              <div className="grid grid-cols-[auto_1fr_3fr_auto_auto_auto] gap-2 items-center px-5 py-2.5 border-b border-gray-100 dark:border-gray-700 shrink-0">
+                <input
+                  type="checkbox"
+                  checked={allSelected}
+                  onChange={() => setLines((prev) => prev.map((l) => ({ ...l, selected: !allSelected })))}
+                  className="w-4 h-4 rounded border-gray-300 accent-rose-500"
+                />
+                <span className="text-[11px] font-medium text-gray-400 uppercase">Data</span>
+                <span className="text-[11px] font-medium text-gray-400 uppercase">Descrição</span>
+                <span className="text-[11px] font-medium text-gray-400 uppercase text-right">Qtd.</span>
+                <span className="text-[11px] font-medium text-gray-400 uppercase text-right">Desc.</span>
+                <span className="text-[11px] font-medium text-gray-400 uppercase text-right">Valor</span>
+              </div>
+
+              {/* rows */}
+              <div className="flex-1 overflow-y-auto divide-y divide-gray-50 dark:divide-gray-700/50">
+                {lines.map((line) => {
+                  const final = Math.max(0, Number(line.appt.service.price) - line.discount);
+                  return (
+                    <div key={line.appt.id} className="grid grid-cols-[auto_1fr_3fr_auto_auto_auto] gap-2 items-center px-5 py-3.5">
+                      <input
+                        type="checkbox"
+                        checked={line.selected}
+                        onChange={() => toggleLine(line.appt.id)}
+                        className="w-4 h-4 rounded border-gray-300 accent-rose-500"
+                      />
+                      <span className="text-xs text-gray-500 dark:text-gray-400">{fmtDate(line.appt.date)}</span>
+                      <span className="text-sm text-gray-800 dark:text-gray-200 truncate">{line.appt.service.name}</span>
+                      <span className="text-sm text-gray-600 dark:text-gray-400 text-right">1</span>
+                      <input
+                        type="number"
+                        min={0}
+                        max={Number(line.appt.service.price)}
+                        step={0.01}
+                        value={line.discount || ""}
+                        onChange={(e) => setDiscount(line.appt.id, Number(e.target.value))}
+                        placeholder="0,00"
+                        className="w-16 text-xs text-right border border-gray-200 dark:border-gray-600 rounded-lg px-2 py-1 bg-white dark:bg-gray-800 text-gray-700 dark:text-gray-300 focus:outline-none focus:ring-1 focus:ring-rose-400"
+                      />
+                      <span className="text-sm font-medium text-gray-900 dark:text-white text-right w-16">
+                        {final.toFixed(2)}
+                      </span>
+                    </div>
+                  );
+                })}
+              </div>
+
+              {/* totals */}
+              <div className="px-5 py-3 border-t border-gray-100 dark:border-gray-700 space-y-1 shrink-0">
+                <div className="flex justify-between text-sm text-gray-500 dark:text-gray-400">
+                  <span>Subtotal</span><span>R$ {subtotal.toFixed(2)}</span>
+                </div>
+                <div className="flex justify-between text-sm text-gray-500 dark:text-gray-400">
+                  <span>Descontos</span><span>R$ {totalDiscount.toFixed(2)}</span>
+                </div>
+                <div className="flex justify-between text-base font-bold text-gray-900 dark:text-white pt-1.5 border-t border-gray-100 dark:border-gray-700 mt-1">
+                  <span>Total</span><span>R$ {total.toFixed(2)}</span>
+                </div>
+              </div>
+
+              {/* footer */}
+              <div className="flex gap-3 px-5 pb-5 shrink-0">
+                <button onClick={onClose} className="flex-1 py-2.5 rounded-xl border border-gray-200 dark:border-gray-600 text-sm text-gray-600 dark:text-gray-400 font-medium hover:bg-gray-50 dark:hover:bg-gray-700/50 transition-colors">
+                  Cancelar
+                </button>
+                <button
+                  onClick={goToPayment}
+                  disabled={selected.length === 0}
+                  className="flex-1 py-2.5 rounded-xl bg-rose-500 hover:bg-rose-600 text-white text-sm font-semibold transition-colors disabled:opacity-40"
+                >
+                  Continuar
+                </button>
+              </div>
+            </>
+          )
+        )}
+
+        {/* Step 2: Payment */}
+        {step === "payment" && (
+          <div className="flex-1 flex flex-col p-5 gap-4 overflow-y-auto">
+            <div className="text-center py-2">
+              <p className="text-xs text-gray-500 dark:text-gray-400">Falta Pagar</p>
+              <p className="text-3xl font-bold text-gray-900 dark:text-white mt-1">R$ {total.toFixed(2)}</p>
+            </div>
+
+            <div>
+              <label className="text-xs font-medium text-gray-500 dark:text-gray-400 block mb-1.5">Forma de Pagamento</label>
+              <button
+                type="button"
+                onClick={() => setShowMethodPicker(true)}
+                className={`w-full px-4 py-3 rounded-xl border text-left text-sm transition-colors bg-white dark:bg-gray-800 ${
+                  payMethod ? "border-rose-400 text-gray-900 dark:text-white" : "border-gray-200 dark:border-gray-600 text-gray-400"
+                }`}
+              >
+                {payMethod
+                  ? `${PAYMENT_LABELS[payMethod]?.emoji ?? ""} ${PAYMENT_LABELS[payMethod]?.label ?? payMethod}`
+                  : "Selecionar forma de pagamento"}
+              </button>
+            </div>
+
+            <div>
+              <label className="text-xs font-medium text-gray-500 dark:text-gray-400 block mb-1.5">Valor (R$)</label>
+              <input
+                type="number"
+                min={0}
+                step={0.01}
+                value={payAmount}
+                onChange={(e) => setPayAmount(Number(e.target.value))}
+                className="w-full px-4 py-3 rounded-xl border border-gray-200 dark:border-gray-600 bg-white dark:bg-gray-800 text-sm text-gray-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-rose-400/40"
+              />
+            </div>
+
+            <div>
+              <label className="text-xs font-medium text-gray-500 dark:text-gray-400 block mb-1.5">Data do Pagamento</label>
+              <input
+                type="date"
+                value={payDate}
+                onChange={(e) => setPayDate(e.target.value)}
+                className="w-full px-4 py-3 rounded-xl border border-gray-200 dark:border-gray-600 bg-white dark:bg-gray-800 text-sm text-gray-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-rose-400/40"
+              />
+            </div>
+
+            <button
+              onClick={submit}
+              disabled={saving || !payMethod}
+              className="w-full py-3 rounded-xl bg-rose-500 hover:bg-rose-600 text-white font-semibold text-sm transition-colors disabled:opacity-50"
+            >
+              {saving ? "Salvando…" : "Salvar"}
+            </button>
+          </div>
+        )}
+
+        {/* Step: view existing invoice */}
+        {step === "view" && existingInvoice && (
+          <div className="flex-1 flex flex-col overflow-y-auto">
+            <div className="flex-1 divide-y divide-gray-50 dark:divide-gray-700/50 overflow-y-auto">
+              {existingInvoice.items.map((item) => (
+                <div key={item.id} className="flex items-center gap-3 px-5 py-3.5">
+                  <div className="flex-1 min-w-0">
+                    <p className="text-sm text-gray-800 dark:text-gray-200 truncate">{item.description}</p>
+                    {item.discount > 0 && (
+                      <p className="text-xs text-gray-400">Desc: R$ {Number(item.discount).toFixed(2)}</p>
+                    )}
+                  </div>
+                  <span className="text-sm font-medium text-gray-900 dark:text-white">
+                    R$ {(Number(item.unit_price) * item.quantity - Number(item.discount)).toFixed(2)}
+                  </span>
+                </div>
+              ))}
+            </div>
+
+            {existingInvoice.payments.length > 0 && (
+              <div className="px-5 py-3 border-t border-gray-100 dark:border-gray-700 space-y-1.5 shrink-0">
+                <p className="text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wide mb-2">Pagamentos</p>
+                {existingInvoice.payments.map((p) => (
+                  <div key={p.id} className="flex items-center justify-between text-sm">
+                    <span className="text-gray-600 dark:text-gray-400">
+                      {PAYMENT_LABELS[p.method]?.emoji} {PAYMENT_LABELS[p.method]?.label ?? p.method}
+                    </span>
+                    <span className="font-medium text-gray-900 dark:text-white">R$ {Number(p.amount).toFixed(2)}</span>
+                  </div>
+                ))}
+              </div>
+            )}
+
+            <div className="px-5 py-3 border-t border-gray-100 dark:border-gray-700 space-y-1 shrink-0">
+              {(() => {
+                const sub = existingInvoice.items.reduce((s, i) => s + Number(i.unit_price) * i.quantity, 0);
+                const disc = existingInvoice.items.reduce((s, i) => s + Number(i.discount), 0);
+                const tot = sub - disc;
+                return (
+                  <>
+                    <div className="flex justify-between text-sm text-gray-500 dark:text-gray-400">
+                      <span>Subtotal</span><span>R$ {sub.toFixed(2)}</span>
+                    </div>
+                    <div className="flex justify-between text-sm text-gray-500 dark:text-gray-400">
+                      <span>Descontos</span><span>R$ {disc.toFixed(2)}</span>
+                    </div>
+                    <div className="flex justify-between text-base font-bold text-gray-900 dark:text-white pt-1.5 border-t border-gray-100 dark:border-gray-700 mt-1">
+                      <span>Total</span><span>R$ {tot.toFixed(2)}</span>
+                    </div>
+                  </>
+                );
+              })()}
+            </div>
+
+            <div className="flex gap-3 px-5 pb-5 shrink-0">
+              <button onClick={onClose} className="flex-1 py-2.5 rounded-xl border border-gray-200 dark:border-gray-600 text-sm text-gray-600 dark:text-gray-400 font-medium hover:bg-gray-50 dark:hover:bg-gray-700/50 transition-colors">
+                Fechar
+              </button>
+              {existingInvoice.status !== "cancelled" && (
+                <button
+                  onClick={reopen}
+                  disabled={reopening}
+                  className="flex-1 py-2.5 rounded-xl bg-slate-800 hover:bg-slate-700 dark:bg-slate-700 dark:hover:bg-slate-600 text-white text-sm font-semibold transition-colors disabled:opacity-50"
+                >
+                  {reopening ? "Reabrindo…" : "Reabrir comanda"}
+                </button>
+              )}
+            </div>
+          </div>
+        )}
+
+        {/* Payment method picker overlay */}
+        {showMethodPicker && (
+          <div
+            className="absolute inset-0 z-10 flex items-end rounded-2xl bg-black/20 backdrop-blur-[2px]"
+            onClick={() => setShowMethodPicker(false)}
+          >
+            <div
+              className="bg-white dark:bg-gray-800 rounded-t-2xl w-full border-t border-gray-200 dark:border-gray-700"
+              onClick={(e) => e.stopPropagation()}
+            >
+              <div className="flex items-center justify-between px-5 py-4 border-b border-gray-100 dark:border-gray-700">
+                <p className="font-semibold text-gray-900 dark:text-white">Selecione…</p>
+                <button onClick={() => setShowMethodPicker(false)} className="p-1 rounded-lg hover:bg-gray-100 dark:hover:bg-gray-700">
+                  <X size={18} className="text-gray-500" />
+                </button>
+              </div>
+              <div className="divide-y divide-gray-100 dark:divide-gray-700 max-h-64 overflow-y-auto">
+                {paymentMethods.length > 0 ? (
+                  paymentMethods.map((m) => (
+                    <button
+                      key={m}
+                      onClick={() => { setPayMethod(m); setShowMethodPicker(false); }}
+                      className="w-full flex items-center justify-between px-5 py-4 hover:bg-gray-50 dark:hover:bg-gray-700/50 transition-colors"
+                    >
+                      <span className="text-sm text-gray-800 dark:text-gray-200">
+                        {PAYMENT_LABELS[m]?.emoji} {PAYMENT_LABELS[m]?.label ?? m}
+                      </span>
+                      <ChevronRight size={16} className="text-gray-400" />
+                    </button>
+                  ))
+                ) : (
+                  <p className="px-5 py-4 text-sm text-gray-400">Nenhuma forma configurada em Configurações</p>
+                )}
+              </div>
+            </div>
+          </div>
+        )}
+      </div>
+    </div>
+  );
 }
 
 /* ── Appointment detail ─────────────────────────────────── */
@@ -1177,22 +1863,91 @@ interface DetailProps {
   isAdmin: boolean;
   isProfessional: boolean;
   onClose(): void;
-  onCancel(id: number): void;
+  onCancelled(ids: number[]): void;
   onComplete(id: number): void;
 }
+type CancelState = "idle" | "checking" | "confirm" | { similar: Appointment[] };
+
 function ApptDetail({
   appt,
   isAdmin,
   isProfessional,
   onClose,
-  onCancel,
+  onCancelled,
   onComplete,
 }: DetailProps) {
-  const color = svcColor(appt.service.id);
+  const color = svcColor(appt.service.id, appt.service.color);
   const st = STATUS[appt.status] ?? STATUS.pending;
   const actionable = ["pending", "confirmed"].includes(appt.status);
+  const [cancelState, setCancelState] = useState<CancelState>("idle");
+  const [showInvoice, setShowInvoice] = useState(false);
+
+  /* WhatsApp choice modal */
+  const [showWaModal, setShowWaModal] = useState(false);
+  const [waMode, setWaMode] = useState<"single" | "all" | "future">("single");
+  const [dayAppts, setDayAppts] = useState<Appointment[] | null>(null);
+  const [futureAppts, setFutureAppts] = useState<Appointment[] | null>(null);
+  const [loadingWaAppts, setLoadingWaAppts] = useState(false);
+
+  function handleOpenWaModal() {
+    setShowWaModal(true);
+    setWaMode("single");
+    if (dayAppts === null && futureAppts === null) {
+      setLoadingWaAppts(true);
+      const today = isoToday();
+      Promise.all([
+        appointmentsApi.list({ from: appt.date, to: appt.date }),
+        appointmentsApi.list({ from: today }),
+      ])
+        .then(([dayRes, futureRes]) => {
+          const forClient = (list: Appointment[]) =>
+            list.filter((a) => a.client?.id === appt.client?.id && a.status !== "cancelled");
+          setDayAppts(forClient(dayRes.data));
+          setFutureAppts(forClient(futureRes.data));
+        })
+        .catch(() => { setDayAppts([appt]); setFutureAppts([appt]); })
+        .finally(() => setLoadingWaAppts(false));
+    }
+  }
+
+  async function sendWa() {
+    setShowWaModal(false);
+    const phone = appt.client!.phone!;
+    if (waMode === "all" && (dayAppts?.length ?? 0) > 1) {
+      await openWhatsAppAll(phone, dayAppts!);
+    } else if (waMode === "future" && (futureAppts?.length ?? 0) > 0) {
+      await openWhatsAppFuture(phone, futureAppts!);
+    } else {
+      await openWhatsApp(phone, appt);
+    }
+  }
+
+  async function handleCancelClick() {
+    setCancelState("checking");
+    try {
+      const res = await appointmentsApi.list({ from: appt.date });
+      const similar = res.data.filter(
+        (a) =>
+          a.id !== appt.id &&
+          ["pending", "confirmed"].includes(a.status) &&
+          a.professional?.id === appt.professional?.id &&
+          a.service?.id === appt.service?.id &&
+          a.start_time === appt.start_time &&
+          (a.client?.id ?? null) === (appt.client?.id ?? null),
+      );
+      setCancelState(similar.length > 0 ? { similar } : "confirm");
+    } catch {
+      setCancelState("confirm");
+    }
+  }
+
+  function doCancel(ids: number[]) {
+    onClose();
+    onCancelled(ids);
+  }
 
   return (
+    <>
     <div
       className="fixed inset-0 z-50 flex items-end sm:items-center justify-center bg-black/30 backdrop-blur-sm p-4"
       onClick={onClose}
@@ -1202,7 +1957,8 @@ function ApptDetail({
         onClick={(e) => e.stopPropagation()}
       >
         <div
-          className={`flex items-start gap-3 px-5 py-4 border-b border-gray-100 dark:border-gray-700 rounded-t-2xl border-l-4 ${color.border}`}
+          className="flex items-start gap-3 px-5 py-4 border-b border-gray-100 dark:border-gray-700 rounded-t-2xl border-l-4"
+          style={{ borderLeftColor: color.style.borderColor as string }}
         >
           <div className="flex-1 min-w-0">
             <p className="font-semibold text-gray-900 dark:text-white truncate">
@@ -1251,31 +2007,124 @@ function ApptDetail({
           </span>
         </div>
 
+        {/* Faturar */}
+        {(isAdmin || isProfessional) && appt.client && (
+          <div className="px-5 pb-3">
+            <button
+              onClick={() => setShowInvoice(true)}
+              className="w-full flex items-center justify-center gap-2 bg-slate-800 hover:bg-slate-700 dark:bg-slate-700 dark:hover:bg-slate-600 text-white rounded-xl py-2.5 text-sm font-semibold transition-colors"
+            >
+              <FileText size={15} /> Faturar
+            </button>
+          </div>
+        )}
+
         {/* WhatsApp reminder */}
         {appt.client?.phone && (
           <div className="px-5 pb-3">
             <button
-              onClick={() => openWhatsApp(appt.client!.phone!, appt)}
+              onClick={handleOpenWaModal}
               className="w-full flex items-center justify-center gap-2 bg-[#25D366] hover:bg-[#1ebe5d] text-white rounded-xl py-2.5 text-sm font-semibold transition-colors"
             >
               <svg className="w-4 h-4 shrink-0" viewBox="0 0 24 24" aria-hidden>
-                <path
-                  fill="currentColor"
-                  d="M17.472 14.382c-.297-.149-1.758-.867-2.03-.967-.273-.099-.471-.148-.67.15-.197.297-.767.966-.94 1.164-.173.199-.347.223-.644.075-.297-.15-1.255-.463-2.39-1.475-.883-.788-1.48-1.761-1.653-2.059-.173-.297-.018-.458.13-.606.134-.133.298-.347.446-.52.149-.174.198-.298.298-.497.099-.198.05-.371-.025-.52-.075-.149-.669-1.612-.916-2.207-.242-.579-.487-.5-.669-.51-.173-.008-.371-.01-.57-.01-.198 0-.52.074-.792.372-.272.297-1.04 1.016-1.04 2.479 0 1.462 1.065 2.875 1.213 3.074.149.198 2.096 3.2 5.077 4.487.709.306 1.262.489 1.694.625.712.227 1.36.195 1.871.118.571-.085 1.758-.719 2.006-1.413.248-.694.248-1.289.173-1.413-.074-.124-.272-.198-.57-.347m-5.421 7.403h-.004a9.87 9.87 0 01-5.031-1.378l-.361-.214-3.741.982.998-3.648-.235-.374a9.86 9.86 0 01-1.51-5.26c.001-5.45 4.436-9.884 9.888-9.884 2.64 0 5.122 1.03 6.988 2.898a9.825 9.825 0 012.893 6.994c-.003 5.45-4.435 9.884-9.885 9.884m8.413-18.297A11.815 11.815 0 0012.05 0C5.495 0 .16 5.335.157 11.892c0 2.096.547 4.142 1.588 5.945L.057 24l6.305-1.654a11.882 11.882 0 005.683 1.448h.005c6.554 0 11.89-5.335 11.893-11.893a11.821 11.821 0 00-3.48-8.413Z"
-                />
+                <path fill="currentColor" d="M17.472 14.382c-.297-.149-1.758-.867-2.03-.967-.273-.099-.471-.148-.67.15-.197.297-.767.966-.94 1.164-.173.199-.347.223-.644.075-.297-.15-1.255-.463-2.39-1.475-.883-.788-1.48-1.761-1.653-2.059-.173-.297-.018-.458.13-.606.134-.133.298-.347.446-.52.149-.174.198-.298.298-.497.099-.198.05-.371-.025-.52-.075-.149-.669-1.612-.916-2.207-.242-.579-.487-.5-.669-.51-.173-.008-.371-.01-.57-.01-.198 0-.52.074-.792.372-.272.297-1.04 1.016-1.04 2.479 0 1.462 1.065 2.875 1.213 3.074.149.198 2.096 3.2 5.077 4.487.709.306 1.262.489 1.694.625.712.227 1.36.195 1.871.118.571-.085 1.758-.719 2.006-1.413.248-.694.248-1.289.173-1.413-.074-.124-.272-.198-.57-.347m-5.421 7.403h-.004a9.87 9.87 0 01-5.031-1.378l-.361-.214-3.741.982.998-3.648-.235-.374a9.86 9.86 0 01-1.51-5.26c.001-5.45 4.436-9.884 9.888-9.884 2.64 0 5.122 1.03 6.988 2.898a9.825 9.825 0 012.893 6.994c-.003 5.45-4.435 9.884-9.885 9.884m8.413-18.297A11.815 11.815 0 0012.05 0C5.495 0 .16 5.335.157 11.892c0 2.096.547 4.142 1.588 5.945L.057 24l6.305-1.654a11.882 11.882 0 005.683 1.448h.005c6.554 0 11.89-5.335 11.893-11.893a11.821 11.821 0 00-3.48-8.413Z" />
               </svg>
               Enviar lembrete via WhatsApp
             </button>
-            <p className="text-[11px] text-center text-gray-400 dark:text-gray-500 mt-2 leading-snug">
-              Abre o WhatsApp com o lembrete e os ícones já no campo de
-              mensagem.
-            </p>
+          </div>
+        )}
+
+        {/* WhatsApp choice modal */}
+        {showWaModal && appt.client?.phone && (
+          <div
+            className="fixed inset-0 z-[70] flex items-center justify-center bg-black/40 backdrop-blur-sm p-4"
+            onClick={() => setShowWaModal(false)}
+          >
+            <div
+              className="bg-white dark:bg-gray-800 rounded-2xl shadow-2xl w-full max-w-sm border border-gray-200 dark:border-gray-700"
+              onClick={(e) => e.stopPropagation()}
+            >
+              {/* header */}
+              <div className="flex items-center justify-between px-5 py-4 border-b border-gray-100 dark:border-gray-700">
+                <p className="font-semibold text-gray-900 dark:text-white">{appt.client.name}</p>
+                <button onClick={() => setShowWaModal(false)} className="p-1 rounded-lg hover:bg-gray-100 dark:hover:bg-gray-700 transition-colors">
+                  <X size={18} className="text-gray-500" />
+                </button>
+              </div>
+
+              <div className="px-5 py-4 space-y-3">
+                {/* single */}
+                <button
+                  type="button"
+                  onClick={() => setWaMode("single")}
+                  className="w-full flex items-center gap-3 text-left"
+                >
+                  <div className={`w-5 h-5 rounded-full border-2 flex items-center justify-center shrink-0 transition-colors ${waMode === "single" ? "border-rose-500" : "border-gray-300 dark:border-gray-500"}`}>
+                    {waMode === "single" && <div className="w-2.5 h-2.5 rounded-full bg-rose-500" />}
+                  </div>
+                  <span className="text-sm text-gray-700 dark:text-gray-300">
+                    Enviar o lembrete apenas deste agendamento
+                  </span>
+                </button>
+
+                {/* all */}
+                <button
+                  type="button"
+                  onClick={() => setWaMode("all")}
+                  className="w-full flex items-center gap-3 text-left"
+                >
+                  <div className={`w-5 h-5 rounded-full border-2 flex items-center justify-center shrink-0 transition-colors ${waMode === "all" ? "border-rose-500" : "border-gray-300 dark:border-gray-500"}`}>
+                    {waMode === "all" && <div className="w-2.5 h-2.5 rounded-full bg-rose-500" />}
+                  </div>
+                  <span className="text-sm text-gray-700 dark:text-gray-300">
+                    Enviar o lembrete com todos os agendamentos marcados para este dia
+                    {loadingWaAppts && <span className="text-xs text-gray-400 ml-1">(carregando…)</span>}
+                    {!loadingWaAppts && (dayAppts?.length ?? 0) > 1 && (
+                      <span className="text-xs text-gray-400 ml-1">({dayAppts!.length} agendamentos)</span>
+                    )}
+                  </span>
+                </button>
+
+                {/* future */}
+                <button
+                  type="button"
+                  onClick={() => setWaMode("future")}
+                  className="w-full flex items-center gap-3 text-left"
+                >
+                  <div className={`w-5 h-5 rounded-full border-2 flex items-center justify-center shrink-0 transition-colors ${waMode === "future" ? "border-rose-500" : "border-gray-300 dark:border-gray-500"}`}>
+                    {waMode === "future" && <div className="w-2.5 h-2.5 rounded-full bg-rose-500" />}
+                  </div>
+                  <span className="text-sm text-gray-700 dark:text-gray-300">
+                    Enviar o lembrete com todos os agendamentos futuros
+                    {loadingWaAppts && <span className="text-xs text-gray-400 ml-1">(carregando…)</span>}
+                    {!loadingWaAppts && (futureAppts?.length ?? 0) > 0 && (
+                      <span className="text-xs text-gray-400 ml-1">({futureAppts!.length} agendamentos)</span>
+                    )}
+                  </span>
+                </button>
+
+                <div className="pt-1 border-t border-gray-100 dark:border-gray-700">
+                  <p className="text-xs text-gray-400 mb-2">Enviar para o telefone:</p>
+                  <button
+                    onClick={sendWa}
+                    disabled={loadingWaAppts}
+                    className="w-full flex items-center gap-3 px-4 py-3 rounded-xl border border-gray-200 dark:border-gray-600 hover:bg-gray-50 dark:hover:bg-gray-700/50 transition-colors disabled:opacity-50 group"
+                  >
+                    <svg className="w-4 h-4 text-gray-500 shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                      <path d="M22 16.92v3a2 2 0 0 1-2.18 2 19.79 19.79 0 0 1-8.63-3.07A19.5 19.5 0 0 1 4.69 13a19.79 19.79 0 0 1-3.07-8.67A2 2 0 0 1 3.6 2h3a2 2 0 0 1 2 1.72c.127.96.361 1.903.7 2.81a2 2 0 0 1-.45 2.11L7.91 9.91a16 16 0 0 0 6.18 6.18l.91-.91a2 2 0 0 1 2.11-.45c.907.339 1.85.573 2.81.7A2 2 0 0 1 22 16.92z" />
+                    </svg>
+                    <span className="flex-1 text-sm font-medium text-gray-700 dark:text-gray-300">{appt.client.phone}</span>
+                    <ChevronRight size={16} className="text-gray-400 group-hover:text-gray-600 dark:group-hover:text-gray-300 transition-colors" />
+                  </button>
+                </div>
+              </div>
+            </div>
           </div>
         )}
 
         {actionable && (
-          <div className="px-5 pb-5 flex gap-2">
-            {(isAdmin || isProfessional) && (
+          <div className="px-5 pb-5 space-y-2">
+            {(isAdmin || isProfessional) && cancelState === "idle" && (
               <button
                 onClick={() => {
                   onComplete(appt.id);
@@ -1285,24 +2134,83 @@ function ApptDetail({
                 title={
                   isEnded(appt.date, appt.end_time) ? "" : "Aguarde o término"
                 }
-                className="flex-1 flex items-center justify-center gap-2 bg-emerald-500 hover:bg-emerald-600 text-white rounded-xl py-2.5 text-sm font-medium transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+                className="w-full flex items-center justify-center gap-2 bg-emerald-500 hover:bg-emerald-600 text-white rounded-xl py-2.5 text-sm font-medium transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
               >
                 <Check size={15} /> Concluir
               </button>
             )}
-            <button
-              onClick={() => {
-                onCancel(appt.id);
-                onClose();
-              }}
-              className="flex-1 flex items-center justify-center gap-2 border border-red-200 dark:border-red-800 bg-red-50 hover:bg-red-100 dark:bg-red-900/30 dark:hover:bg-red-900/50 text-red-600 dark:text-red-400 rounded-xl py-2.5 text-sm font-medium transition-colors"
-            >
-              <X size={15} /> Cancelar
-            </button>
+
+            {/* idle: show cancel button */}
+            {cancelState === "idle" && (
+              <button
+                onClick={handleCancelClick}
+                className="w-full flex items-center justify-center gap-2 border border-red-200 dark:border-red-800 bg-red-50 hover:bg-red-100 dark:bg-red-900/30 dark:hover:bg-red-900/50 text-red-600 dark:text-red-400 rounded-xl py-2.5 text-sm font-medium transition-colors"
+              >
+                <X size={15} /> Cancelar agendamento
+              </button>
+            )}
+
+            {/* checking for similar */}
+            {cancelState === "checking" && (
+              <p className="text-xs text-center text-gray-400 py-2">Verificando agendamentos semelhantes...</p>
+            )}
+
+            {/* confirm single cancel */}
+            {cancelState === "confirm" && (
+              <div className="rounded-xl border border-red-200 dark:border-red-800 bg-red-50 dark:bg-red-900/20 p-3.5 space-y-2.5">
+                <p className="text-xs text-red-700 dark:text-red-400 font-medium">
+                  Confirma o cancelamento deste agendamento?
+                </p>
+                <button
+                  onClick={() => doCancel([appt.id])}
+                  className="w-full bg-red-500 hover:bg-red-600 text-white rounded-lg py-2 text-sm font-semibold transition-colors"
+                >
+                  Sim, cancelar
+                </button>
+                <button
+                  onClick={() => setCancelState("idle")}
+                  className="w-full text-xs text-gray-400 hover:text-gray-600 dark:hover:text-gray-300 transition-colors"
+                >
+                  Voltar
+                </button>
+              </div>
+            )}
+
+            {/* similar appointments found */}
+            {typeof cancelState === "object" && cancelState !== null && "similar" in cancelState && (
+              <div className="rounded-xl border border-amber-200 dark:border-amber-700 bg-amber-50 dark:bg-amber-900/20 p-3.5 space-y-2.5">
+                <p className="text-xs text-amber-700 dark:text-amber-400 font-medium">
+                  Encontrados {cancelState.similar.length + 1} agendamentos semelhantes (mesmo horário e serviço). Cancelar qual?
+                </p>
+                <button
+                  onClick={() => doCancel([appt.id])}
+                  className="w-full flex items-center justify-center gap-2 border border-red-200 dark:border-red-800 bg-white dark:bg-gray-800 hover:bg-red-50 dark:hover:bg-red-900/20 text-red-600 dark:text-red-400 rounded-lg py-2 text-sm font-medium transition-colors"
+                >
+                  Cancelar apenas este
+                </button>
+                <button
+                  onClick={() => doCancel([appt.id, ...cancelState.similar.map((a) => a.id)])}
+                  className="w-full bg-red-500 hover:bg-red-600 text-white rounded-lg py-2 text-sm font-semibold transition-colors"
+                >
+                  {`Cancelar todos (${cancelState.similar.length + 1})`}
+                </button>
+                <button
+                  onClick={() => setCancelState("idle")}
+                  className="w-full text-xs text-gray-400 hover:text-gray-600 dark:hover:text-gray-300 transition-colors"
+                >
+                  Voltar
+                </button>
+              </div>
+            )}
           </div>
         )}
       </div>
     </div>
+
+    {showInvoice && appt.client && (
+      <InvoiceModal appt={appt} onClose={() => setShowInvoice(false)} />
+    )}
+    </>
   );
 }
 
@@ -1388,8 +2296,10 @@ export default function AgendamentosPage() {
   const [professionals, setProfessionals] = useState<ApiUser[]>([]);
   const [allUsers, setAllUsers] = useState<ApiUser[]>([]);
   const [services, setServices] = useState<Service[]>([]);
+  const isClient = !isAdmin && !isProfessional;
   const [filterProfId, setFilterProfId] = useState<number | null>(null);
   const [loadedKey, setLoadedKey] = useState<string | null>(null);
+  const [busySlots, setBusySlots] = useState<{ id: number; date: string; start_time: string; end_time: string; professional_id: number }[]>([]);
   const [rev, setRev] = useState(0);
   const [view, setView] = useState<ViewMode>("week");
   const [currentDate, setCurrentDate] = useState(isoToday);
@@ -1408,6 +2318,7 @@ export default function AgendamentosPage() {
 
   const today = isoToday();
   const canCreate = true;
+  const canBlock = user?.role !== "client";
   const scrollRef = useRef<HTMLDivElement>(null);
 
   /* Scroll to current time on mount (day/week views) */
@@ -1450,14 +2361,26 @@ export default function AgendamentosPage() {
   useEffect(() => {
     const [from, to] = fetchRange.split(":");
     const key = `${fetchRange}:${rev}`;
-    const req =
-      isAdmin || isProfessional
+    if (isClient) {
+      Promise.all([
+        appointmentsApi.mine({ from, to }),
+        appointmentsApi.busy({ from, to }),
+      ])
+        .then(([mineRes, busyRes]) => {
+          setAppointments(mineRes.data);
+          setBusySlots(busyRes.data);
+          setLoadedKey(key);
+        })
+        .catch(() => { toast.error("Erro ao carregar agendamentos"); setLoadedKey(key); });
+    } else {
+      const req = isProfessional
         ? appointmentsApi.list({ from, to })
-        : appointmentsApi.mine({ from, to });
-    req
-      .then((r) => { setAppointments(r.data); setLoadedKey(key); })
-      .catch(() => { toast.error("Erro ao carregar agendamentos"); setLoadedKey(key); });
-  }, [isAdmin, isProfessional, fetchRange, rev]);
+        : appointmentsApi.list({ from, to });
+      req
+        .then((r) => { setAppointments(r.data); setLoadedKey(key); })
+        .catch(() => { toast.error("Erro ao carregar agendamentos"); setLoadedKey(key); });
+    }
+  }, [isClient, isProfessional, fetchRange, rev]);
 
   /* Fetch schedule blocks (admin/professional only) */
   useEffect(() => {
@@ -1505,7 +2428,9 @@ export default function AgendamentosPage() {
     [allUsers],
   );
 
-  const scheduleProfId = isProfessional ? (user?.id ?? null) : filterProfId;
+  const scheduleProfId = isProfessional
+    ? (user?.id ?? null)
+    : filterProfId ?? (isAdmin ? (user?.id ?? null) : null);
 
   const [profScheduleEntry, setProfScheduleEntry] = useState<{ id: number; schedule: Schedule } | null>(null);
   const profSchedule = profScheduleEntry?.id === scheduleProfId ? profScheduleEntry.schedule : null;
@@ -1526,8 +2451,9 @@ export default function AgendamentosPage() {
   }, [canCreate, scheduleProfId]);
 
   const filtered = useMemo(() => {
-    if (!filterProfId) return appointments;
-    return appointments.filter((a) => a.professional?.id === filterProfId);
+    return appointments.filter(
+      (a) => a.status !== "cancelled" && (!filterProfId || a.professional?.id === filterProfId),
+    );
   }, [appointments, filterProfId]);
 
   const byDate = useMemo(() => {
@@ -1547,6 +2473,12 @@ export default function AgendamentosPage() {
     return map;
   }, [filteredBlocks]);
 
+  const busyByDate = useMemo(() => {
+    const map: Record<string, typeof busySlots> = {};
+    for (const s of busySlots) (map[s.date] ??= []).push(s);
+    return map;
+  }, [busySlots]);
+
   const tryOpenCreateSlot = useCallback(
     (dateStr: string, slotTime: string) => {
       if (
@@ -1554,9 +2486,7 @@ export default function AgendamentosPage() {
         profSchedule &&
         !scheduleAllowsSlotStart(profSchedule, dateStr, slotTime, 30)
       ) {
-        toast.error(
-          "Este horário está fora da disponibilidade ou em dia bloqueado do profissional.",
-        );
+        if (canBlock) setBlockSlot({ date: dateStr, time: slotTime });
         return;
       }
 
@@ -1577,7 +2507,7 @@ export default function AgendamentosPage() {
 
       setCreateSlot({ date: dateStr, time: adjustedTime });
     },
-    [scheduleProfId, profSchedule, byDate],
+    [scheduleProfId, profSchedule, byDate, canBlock],
   );
 
   const tryOpenFromMonth = useCallback(
@@ -1587,14 +2517,12 @@ export default function AgendamentosPage() {
         profSchedule &&
         !scheduleAllowsDay(profSchedule, iso)
       ) {
-        toast.error(
-          "Dia bloqueado ou fora dos dias de trabalho deste profissional.",
-        );
+        if (canBlock) setBlockSlot({ date: iso, time: "09:00" });
         return;
       }
       setCreateSlot({ date: iso, time: "09:00" });
     },
-    [scheduleProfId, profSchedule],
+    [scheduleProfId, profSchedule, canBlock],
   );
 
   const tryOpenDefaultAgendar = useCallback(() => {
@@ -1603,13 +2531,11 @@ export default function AgendamentosPage() {
       profSchedule &&
       !scheduleAllowsSlotStart(profSchedule, currentDate, "09:00", 30)
     ) {
-      toast.error(
-        "Este dia/horário não está disponível na agenda do profissional.",
-      );
+      if (canBlock) setBlockSlot({ date: currentDate, time: "09:00" });
       return;
     }
     setCreateSlot({ date: currentDate, time: "09:00" });
-  }, [scheduleProfId, profSchedule, currentDate]);
+  }, [scheduleProfId, profSchedule, currentDate, canBlock]);
 
   /* Days shown in time-grid views */
   const viewDays = useMemo(() => {
@@ -1648,21 +2574,14 @@ export default function AgendamentosPage() {
     return `${MONTH_NAMES[d.getMonth()]}/${d.getFullYear()}`;
   }, [view, currentDate, viewDays]);
 
-  const handleCancel = (id: number) => {
-    setConfirmDialog({
-      title: "Cancelar agendamento?",
-      description: "Esta ação não pode ser desfeita.",
-      confirmLabel: "Cancelar agendamento",
-      cancelLabel: "Voltar",
-      variant: "danger",
-      onConfirm: () => {
-        setConfirmDialog(null);
-        const tid = toast.loading("Cancelando...");
-        appointmentsApi.cancel(id)
-          .then(() => toast.success("Agendamento cancelado", { id: tid }))
-          .catch(() => { toast.error("Erro ao cancelar", { id: tid }); setRev((v) => v + 1); });
-      },
-    });
+  const handleCancelled = (ids: number[]) => {
+    const tid = toast.loading(ids.length > 1 ? `Cancelando ${ids.length} agendamentos...` : "Cancelando...");
+    const req = ids.length === 1
+      ? appointmentsApi.cancel(ids[0])
+      : appointmentsApi.cancelBatch(ids);
+    req
+      .then(() => { toast.success(ids.length > 1 ? `${ids.length} agendamentos cancelados` : "Agendamento cancelado", { id: tid }); setRev((v) => v + 1); })
+      .catch(() => { toast.error("Erro ao cancelar", { id: tid }); setRev((v) => v + 1); });
   };
   const handleComplete = (id: number) => {
     setConfirmDialog({
@@ -1891,18 +2810,16 @@ export default function AgendamentosPage() {
 
                   {visible.map((item) => {
                     if (item.kind === "appt") {
-                      const c = svcColor(item.appt.service.id);
+                      const c = svcColor(item.appt.service.id, item.appt.service.color);
                       return (
                         <div
                           key={`a-${item.appt.id}`}
-                          className={`text-[11px] truncate px-1.5 py-0.5 rounded mb-0.5 cursor-pointer
-                            ${item.appt.status === "cancelled"
-                              ? "bg-gray-200 dark:bg-gray-700 text-gray-400 dark:text-gray-500 line-through"
-                              : `${c.bg} ${c.text}`}`}
+                          className="text-[11px] truncate px-1.5 py-0.5 rounded mb-0.5 cursor-pointer"
+                          style={c.style}
                           onClick={(e) => { e.stopPropagation(); setDetailAppt(item.appt); }}
                         >
                           {item.appt.start_time.slice(0, 5)}{" "}
-                          {item.appt.client?.name ?? item.appt.professional?.name},{" "}
+                          {!isClient && (item.appt.client?.name ?? item.appt.professional?.name) + ", "}
                           {item.appt.service.name}
                         </div>
                       );
@@ -2021,7 +2938,9 @@ export default function AgendamentosPage() {
                       { length: (END_HOUR - START_HOUR) * 2 },
                       (_, i) => {
                         const slotTime = minToTime(START_HOUR * 60 + i * 30);
-                        const disabledSlot = Boolean(
+                        const slotMin = START_HOUR * 60 + i * 30;
+                        const slotEndMin = slotMin + 30;
+                        const scheduleDisabled = Boolean(
                           scheduleProfId &&
                           profSchedule &&
                           !scheduleAllowsSlotStart(
@@ -2031,6 +2950,19 @@ export default function AgendamentosPage() {
                             30,
                           ),
                         );
+                        const occupiedDisabled = isClient && (
+                          (busyByDate[dateStr] ?? []).some((b) => {
+                            const bStart = timeToMin(b.start_time);
+                            const bEnd = timeToMin(b.end_time);
+                            return slotMin < bEnd && slotEndMin > bStart;
+                          }) ||
+                          (byDate[dateStr] ?? []).some((a) => {
+                            const aStart = timeToMin(a.start_time);
+                            const aEnd = timeToMin(a.end_time);
+                            return slotMin < aEnd && slotEndMin > aStart;
+                          })
+                        );
+                        const disabledSlot = scheduleDisabled || occupiedDisabled;
                         return (
                           <div
                             key={i}
@@ -2041,9 +2973,7 @@ export default function AgendamentosPage() {
                             }}
                             onClick={() => {
                               if (disabledSlot) {
-                                toast.error(
-                                  "Fora do horário ou dia bloqueado para este profissional.",
-                                );
+                                if (canBlock) setBlockSlot({ date: dateStr, time: slotTime });
                                 return;
                               }
                               tryOpenCreateSlot(dateStr, slotTime);
@@ -2114,6 +3044,33 @@ export default function AgendamentosPage() {
                       );
                     })}
 
+                    {/* Busy slots (client view only) */}
+                    {isClient && (busyByDate[dateStr] ?? []).map((slot) => {
+                      const startMin = timeToMin(slot.start_time) - START_HOUR * 60;
+                      const endMin = timeToMin(slot.end_time) - START_HOUR * 60;
+                      const top = (startMin / 60) * HOUR_PX;
+                      const height = Math.max(((endMin - startMin) / 60) * HOUR_PX, HOUR_PX / 2);
+                      const compact = height < HOUR_PX * 0.75;
+                      const isOwn = appointments.some((a) => a.id === slot.id);
+                      if (isOwn) return null;
+                      return (
+                        <div
+                          key={`busy-${slot.id}`}
+                          style={{ top: `${top + 2}px`, height: `${height - 3}px`, left: "2px", right: "2px" }}
+                          className="absolute z-[5] overflow-hidden rounded-md border-l-[3px] border-l-gray-300 dark:border-l-gray-600 px-1.5 py-1 bg-gray-100/80 dark:bg-gray-700/50 select-none pointer-events-none"
+                        >
+                          <p className="text-[11px] font-semibold leading-tight truncate text-gray-400 dark:text-gray-500">
+                            {compact
+                              ? `${slot.start_time.slice(0, 5)} · Ocupado`
+                              : `${slot.start_time.slice(0, 5)} – ${slot.end_time.slice(0, 5)}`}
+                          </p>
+                          {!compact && (
+                            <p className="text-[11px] leading-tight mt-0.5 text-gray-400 dark:text-gray-500">Ocupado</p>
+                          )}
+                        </div>
+                      );
+                    })}
+
                     {/* Appointment blocks */}
                     {dayLayout.map(({ appt, left, width }) => {
                       const startMin =
@@ -2124,7 +3081,7 @@ export default function AgendamentosPage() {
                         ((endMin - startMin) / 60) * HOUR_PX,
                         HOUR_PX / 2,
                       );
-                      const color = svcColor(appt.service.id);
+                      const color = svcColor(appt.service.id, appt.service.color);
                       const compact = height < HOUR_PX * 0.75;
 
                       return (
@@ -2135,20 +3092,18 @@ export default function AgendamentosPage() {
                             height: `${height - 3}px`,
                             left: `calc(${left * 100}% + 2px)`,
                             width: `calc(${width * 100}% - 4px)`,
+                            ...color.style,
                           }}
-                          className={`absolute z-10 overflow-hidden rounded-md border-l-[3px] px-1.5 py-1 cursor-pointer select-none transition-opacity hover:opacity-80
-                            ${appt.status === "cancelled"
-                              ? "bg-gray-100 dark:bg-gray-700/50 border-l-gray-400 dark:border-l-gray-500 text-gray-400 dark:text-gray-500"
-                              : `${color.bg} ${color.border} ${color.text}`}`}
+                          className="absolute z-10 overflow-hidden rounded-md border-l-[3px] px-1.5 py-1 cursor-pointer select-none transition-opacity hover:opacity-80"
                           onClick={(e) => {
                             e.stopPropagation();
                             setDetailAppt(appt);
                           }}
                         >
                           {compact ? (
-                            <p className={`text-[11px] font-semibold leading-tight truncate ${appt.status === "cancelled" ? "line-through" : ""}`}>
+                            <p className="text-[11px] font-semibold leading-tight truncate">
                               {appt.start_time.slice(0, 5)} ·{" "}
-                              {appt.client?.name ?? appt.service.name}
+                              {appt.service.name}
                             </p>
                           ) : (
                             <>
@@ -2156,9 +3111,11 @@ export default function AgendamentosPage() {
                                 {appt.start_time.slice(0, 5)} –{" "}
                                 {appt.end_time.slice(0, 5)}
                               </p>
-                              <p className={`text-[12px] font-bold leading-tight mt-0.5 truncate ${appt.status === "cancelled" ? "line-through" : ""}`}>
-                                {appt.client?.name ?? appt.professional?.name}
-                              </p>
+                              {!isClient && (
+                                <p className="text-[12px] font-bold leading-tight mt-0.5 truncate">
+                                  {appt.client?.name ?? appt.professional?.name}
+                                </p>
+                              )}
                               <p className="text-[11px] leading-tight opacity-75 truncate">
                                 {appt.service.name}
                               </p>
@@ -2195,7 +3152,7 @@ export default function AgendamentosPage() {
           }}
         />
       )}
-      {blockSlot && (
+      {blockSlot && canBlock && (
         <BlockModal
           date={blockSlot.date}
           time={blockSlot.time}
@@ -2212,7 +3169,7 @@ export default function AgendamentosPage() {
           isAdmin={isAdmin}
           isProfessional={isProfessional}
           onClose={() => setDetailAppt(null)}
-          onCancel={handleCancel}
+          onCancelled={handleCancelled}
           onComplete={handleComplete}
         />
       )}

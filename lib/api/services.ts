@@ -8,6 +8,7 @@ export interface Service {
   price: number;
   is_active: boolean;
   tenant_id: number;
+  color?: string;
 }
 
 export const servicesApi = {

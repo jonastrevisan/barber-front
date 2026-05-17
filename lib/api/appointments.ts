@@ -17,7 +17,7 @@ export interface Appointment {
   end_time: string;
   status: string;
   notes?: string;
-  service: { id: number; name: string; duration_minutes: number; price: number };
+  service: { id: number; name: string; duration_minutes: number; price: number; color?: string };
   professional: { id: number; name: string };
   client?: { id: number; name: string; phone?: string };
 }
@@ -36,6 +36,7 @@ export const appointmentsApi = {
     api.get<Stats>('/appointments/stats', { params }),
   list: (params?: { date?: string; from?: string; to?: string }) => api.get<Appointment[]>('/appointments', { params }),
   mine: (params?: { from?: string; to?: string }) => api.get<Appointment[]>('/appointments/mine', { params }),
+  busy: (params?: { from?: string; to?: string }) => api.get<{ id: number; date: string; start_time: string; end_time: string; professional_id: number }[]>('/appointments/busy', { params }),
   availableSlots: (params: {
     professional_id: number;
     service_id: number;
@@ -54,7 +55,16 @@ export const appointmentsApi = {
     notes?: string;
     client_id?: number;
   }) => api.post<Appointment>('/appointments', data),
+  createBatch: (data: {
+    professional_id: number;
+    service_id: number;
+    dates: string[];
+    start_time: string;
+    notes?: string;
+    client_id?: number;
+  }) => api.post<{ created: Appointment[]; skipped: string[]; adjusted: { from: string; to: string }[] }>('/appointments/batch', data),
   cancel: (id: number) => api.patch(`/appointments/${id}/cancel`),
+  cancelBatch: (ids: number[]) => api.patch('/appointments/batch/cancel', { ids }),
   complete: (id: number) => api.patch(`/appointments/${id}/complete`),
   createBlock: (data: {
     professional_id: number;
